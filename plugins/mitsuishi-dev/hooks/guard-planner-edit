@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# PreToolUse（Edit / Write / MultiEdit / NotebookEdit）
+# プランナー（メインのセッション＝Fable）がコードを直接編集するのを止め、実行役（サブエージェント）へ委任させる。
+# サブエージェント内からの呼び出しには agent_id が付くので、それは通す。
+# 計画書・設計書などの文書（*.md、VERSION、CHANGELOG 等）はメインでも編集してよい。
+# 緊急時は環境変数 MITSUISHI_ALLOW_PLANNER_EDIT=1 で無効化できる。
+
+INPUT=$(cat)
+
+[ "${MITSUISHI_ALLOW_PLANNER_EDIT:-0}" = "1" ] && exit 0
+printf '%s' "$INPUT" | grep -q '"agent_id"[[:space:]]*:' && exit 0
+
+FILE=$(printf '%s' "$INPUT" | sed -n 's/.*"\(file_path\|notebook_path\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' | head -1)
+BASE="${FILE##*/}"; BASE="${BASE##*\\}"
+case "$BASE" in
+  *.md|*.MD|*.markdown|VERSION|CHANGELOG*|TODOS*) exit 0 ;;
+esac
+
+REASON="社内ルール：プランナー（メインのセッション）はコードを直接編集しません。この変更は実行役のサブエージェントに委任してください（Superpowers の subagent-driven-development を使うか、Agent ツールで実装を依頼する）。軽微な修正でも同様です。対象: ${FILE:-不明}"
+REASON=${REASON//\\/\\\\}; REASON=${REASON//\"/\\\"}
+printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$REASON"
+exit 0

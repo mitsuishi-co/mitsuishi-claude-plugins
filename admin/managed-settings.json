@@ -1,0 +1,16 @@
+{
+  "model": "claude-fable-5-1",
+  "env": {
+    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-opus-5-5"
+  },
+  "extraKnownMarketplaces": {
+    "mitsuishi": {
+      "source": { "source": "github", "repo": "YOUR-GITHUB-ORG/mitsuishi-claude-plugins" },
+      "autoUpdate": true
+    }
+  },
+  "enabledPlugins": {
+    "mitsuishi-dev@mitsuishi": true,
+    "superpowers@mitsuishi": true
+  }
+}

@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+# mitsuishi-dev SessionStart フック
+#   1. gstack が未導入なら ~/.claude/skills/gstack に導入する
+#   2. 導入済みなら gstack 公式の無人アップデータ（bin/gstack-upgrade）で最新版に更新する
+#   3. 社内ワークフロー（skills/workflow/SKILL.md）と gstack の状態をセッションに注入する
+# どんなエラーでもセッション開始は止めない（常に exit 0）。
+
+set +e
+
+PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
+GSTACK_DIR="${GSTACK_DIR:-$HOME/.claude/skills/gstack}"
+GSTACK_REPO="https://github.com/garrytan/gstack.git"
+LOG_DIR="$HOME/.claude/mitsuishi-dev"
+LOG_FILE="$LOG_DIR/gstack.log"
+mkdir -p "$LOG_DIR" 2>/dev/null
+
+log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG_FILE" 2>/dev/null; }
+
+STATUS=""
+
+if [ -d "$GSTACK_DIR/.git" ]; then
+  # ── 使用前の更新 ──
+  # gstack のディレクトリから実行する（呼び出し元プロジェクトの検査を走らせないため）
+  OUT=$(cd "$GSTACK_DIR" && "$GSTACK_DIR/bin/gstack-upgrade" </dev/null 2>&1)
+  RC=$?
+  log "gstack-upgrade rc=$RC: $OUT"
+  LAST=$(printf '%s\n' "$OUT" | grep 'gstack-upgrade:' | tail -1)
+  case "$RC" in
+    0)
+      case "$LAST" in
+        *upgraded*) STATUS="gstack を更新しました（${LAST#gstack-upgrade: }）。" ;;
+        *)          STATUS="gstack は最新です。" ;;
+      esac ;;
+    *)
+      STATUS="【注意】gstack の更新に失敗しました（終了コード $RC）。gstack のコマンドを使う前にユーザーへ伝えること。詳細: ${LAST:-$LOG_FILE を参照}" ;;
+  esac
+
+elif [ -e "$GSTACK_DIR" ]; then
+  STATUS="【注意】$GSTACK_DIR は存在しますが git の作業コピーではないため、自動更新できません。gstack を使う前にユーザーへ伝えること。"
+
+else
+  # ── 初回導入 ──
+  MISSING=""
+  command -v git >/dev/null 2>&1 || MISSING="$MISSING Git"
+  command -v bun >/dev/null 2>&1 || MISSING="$MISSING Bun"
+  case "$(uname -s 2>/dev/null)" in
+    MINGW*|MSYS*|CYGWIN*) command -v node >/dev/null 2>&1 || MISSING="$MISSING Node.js" ;;
+  esac
+
+  if [ -n "$MISSING" ]; then
+    STATUS="【注意】gstack が未インストールです。必要なツール（${MISSING# }）が見つからないため自動導入できませんでした。ユーザーに、社内手順（README）に沿って${MISSING# }を入れてから Claude Code を再起動するよう伝えること。"
+    log "install skipped: missing$MISSING"
+  else
+    log "installing gstack into $GSTACK_DIR"
+    mkdir -p "$(dirname "$GSTACK_DIR")"
+    if git clone --single-branch --depth 1 "$GSTACK_REPO" "$GSTACK_DIR" >>"$LOG_FILE" 2>&1 \
+       && (cd "$GSTACK_DIR" && ./setup -q --no-plan-tune-hooks </dev/null) >>"$LOG_FILE" 2>&1; then
+      STATUS="gstack を新規に導入しました。gstack のスラッシュコマンドは Claude Code を再起動すると使えるようになる場合があります。必要ならユーザーにそう伝えること。"
+      log "install ok"
+    else
+      STATUS="【注意】gstack の自動導入に失敗しました。ログ: $LOG_FILE 。gstack を使う前にユーザーへ伝えること。"
+      log "install failed"
+    fi
+  fi
+fi
+
+# ── セッションへの注入 ──
+RULES=""
+SKILL_MD="$PLUGIN_ROOT/skills/workflow/SKILL.md"
+if [ -r "$SKILL_MD" ]; then
+  # フロントマター（--- で囲まれた部分）を除いた本文
+  RULES=$(awk 'BEGIN{n=0} /^---[[:space:]]*$/ && n<2 {n++; next} n>=2 {print}' "$SKILL_MD")
+fi
+
+CONTEXT="<mitsuishi-dev>
+この組織の Claude Code では、以下の社内標準ワークフローに従うこと。Superpowers の指示と食い違う場合は、こちらを優先する。
+
+${RULES}
+
+## gstack の状態（このセッション開始時）
+${STATUS}
+</mitsuishi-dev>"
+
+esc() {
+  local s="$1"
+  s="${s//\\/\\\\}"
+  s="${s//\"/\\\"}"
+  s="${s//$'\n'/\\n}"
+  s="${s//$'\r'/\\r}"
+  s="${s//$'\t'/\\t}"
+  printf '%s' "$s"
+}
+
+printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$(esc "$CONTEXT")"
+
+exit 0

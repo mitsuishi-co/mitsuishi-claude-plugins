@@ -1,0 +1,20 @@
+{
+  "name": "mitsuishi",
+  "description": "株式会社グリーン設備（2026年12月1日より株式会社ミツイシ）社内用 Claude Code プラグイン",
+  "owner": {
+    "name": "株式会社グリーン設備"
+  },
+  "plugins": [
+    {
+      "name": "mitsuishi-dev",
+      "description": "社内標準の開発ワークフロー（プランナー＝Fable／実行役＝サブエージェントの分離、gstack × Superpowers の分担、gstack の自動導入と使用前更新）",
+      "version": "1.1.0",
+      "source": "./plugins/mitsuishi-dev"
+    },
+    {
+      "name": "superpowers",
+      "description": "obra/superpowers：計画→サブエージェント実行、TDD、2段階レビュー",
+      "source": { "source": "github", "repo": "obra/superpowers" }
+    }
+  ]
+}

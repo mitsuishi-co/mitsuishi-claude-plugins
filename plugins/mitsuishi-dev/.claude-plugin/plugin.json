@@ -1,0 +1,7 @@
+{
+  "name": "mitsuishi-dev",
+  "description": "社内標準の開発ワークフロー（プランナー＝Fable／実行役＝サブエージェントの分離、gstack × Superpowers の分担、gstack の自動導入と使用前更新）",
+  "version": "1.1.0",
+  "author": { "name": "株式会社グリーン設備" },
+  "license": "UNLICENSED"
+}
