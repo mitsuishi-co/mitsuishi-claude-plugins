@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   checks:
+    # この名前と下の「秘密の検査（gitleaks）」は main の保護の必須チェックに使っている。変えたら GitHub の保護の設定も同じ名前に直す（直さないと PR が取り込めなくなる）
     name: 必須の検査 (${{ matrix.os }})
     strategy:
       fail-fast: false
