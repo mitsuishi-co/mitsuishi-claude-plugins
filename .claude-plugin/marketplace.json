@@ -15,8 +15,8 @@
       "name": "superpowers",
       "description": "obra/superpowers（sha で固定し、CI が毎日上げる PR で更新）。社内で使うのは test-driven-development・systematic-debugging・verification-before-completion・receiving-code-review の 4 つだけ",
       "source": {
-        "source": "github",
-        "repo": "obra/superpowers",
+        "source": "url",
+        "url": "https://github.com/obra/superpowers.git",
         "sha": "22f0b463e7a5e579904dd6211a520321035526f7"
       }
     }

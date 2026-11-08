@@ -78,7 +78,10 @@ function output(kv) {
 const pinsText = read(P.pins), marketText = read(P.market), pluginText = read(P.plugin);
 const pins = JSON.parse(pinsText), market = JSON.parse(marketText), plugin = JSON.parse(pluginText);
 const sp = market.plugins.find((p) => p.name === 'superpowers');
-const spRepo = sp.source.repo;
+// superpowers は url（HTTPS）形式で固定している（github 形式は SSH で clone され、鍵の無い PC で入らない）
+const spUrl = sp.source.url;
+const spRepo = sp.source.source === 'url' && typeof spUrl === 'string' ? repoOf(spUrl) : null;
+if (!spRepo) fail(`marketplace.json の superpowers の source が {"source":"url","url":"https://github.com/<owner>/<repo>.git"} の形ではない`);
 const gsUrl = pins.gstack.repo;
 const gsRepo = repoOf(gsUrl);
 
@@ -87,7 +90,7 @@ const vm = /^(\d+)\.(\d+)\.(\d+)$/.exec(ver);
 if (!vm) fail(`mitsuishi-dev の版が x.y.z の形ではない（${ver}）。prerelease などは自動で上げない。直し方: plugin.json・marketplace.json・CHANGELOG.md を x.y.z の版にそろえる`);
 
 const oldG = pins.gstack.sha, oldS = sp.source.sha;
-const newG = headOf(gsUrl, 'gstack'), newS = headOf(`https://github.com/${spRepo}`, 'superpowers');
+const newG = headOf(gsUrl, 'gstack'), newS = headOf(spUrl, 'superpowers');
 const changes = [], links = [], notes = [];
 const bumpG = newG !== oldG;
 let bumpS = false;
