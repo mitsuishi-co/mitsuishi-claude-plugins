@@ -1,0 +1,7 @@
+# gitleaks の既定の規則に、誤検知の除外だけを足す
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "上流 superpowers の写しのテスト。RFC 6455 の例の値（the sample nonce）で鍵ではない"
+paths = ['''^plugins/superpowers/tests/brainstorm-server/ws-protocol\.test\.js$''']
