@@ -1,7 +1,7 @@
 {
   "name": "mitsuishi-dev",
   "description": "社内標準の開発ワークフロー（プランナーと実行役の分担・モデルの使い分け・gstack の工程・gstack の導入と設定）",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "author": { "name": "株式会社グリーン設備" },
   "license": "UNLICENSED"
 }

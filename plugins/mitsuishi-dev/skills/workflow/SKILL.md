@@ -86,5 +86,5 @@ description: 社内標準の開発ワークフロー。メイン（プランナ�
 
 ## gstack の状態
 
-- gstack の導入と毎日の更新は、セッションを git のリポジトリの中で始めたときだけ、このプラグインが裏で行う（固定の sha を checkout して `./setup -q --no-plan-tune-hooks`、設定を `auto_upgrade: false`・`codex_reviews: disabled`・`telemetry: off` にそろえる）
+- gstack の導入と毎日の更新は、どのフォルダでセッションを始めても（git があれば）、このプラグインが裏で行う（固定の sha を checkout して `./setup -q --no-plan-tune-hooks`、設定を `auto_upgrade: false`・`codex_reviews: disabled`・`telemetry: off` にそろえる）
 - セッション開始時の状態行が「導入済」以外（導入中・未導入・3 回続けて失敗・編集ガード無効）なら、gstack のコマンドを使う前に利用者へ伝えて指示を仰ぐ。失敗のときは状態行の手順とログのパスを示す
