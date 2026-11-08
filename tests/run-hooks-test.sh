@@ -797,7 +797,7 @@ if command -v node >/dev/null 2>&1; then
   breset
   bump "$GA" "$SB" "$VCH"
   t "上流の固定を上げる: pins.json・marketplace.json の sha・版の patch・CHANGELOG を書き換える" \
-    '[ $RC = 0 ] && grep -q "$GA" "$PN" && grep -q "\"sha\": \"$SB\"" "$MK" && grep -q "\"version\": \"$NV\"" "$PJ" && head -n 5 "$CR/CHANGELOG.md" | grep -q "^- $NV .*上流の固定を上げる" && ghout | grep -q "^changed<<"' "$OUT"
+    '[ $RC = 0 ] && grep -q "$GA" "$PN" && grep -q "\"sha\": \"$SB\"" "$MK" && grep -q "\"version\": \"$NV\"" "$PJ" && head -n 6 "$CR/CHANGELOG.md" | grep -q "^- $NV .*上流の固定を上げる" && ghout | grep -q "^changed<<"' "$OUT"
   t "PR の本文に上流ごとの compare のリンク" \
     'ghout | grep -q "https://github.com/garrytan/gstack/compare/$PIN\.\.\.$GA" && ghout | grep -q "https://github.com/obra/superpowers/compare/$OLDS\.\.\.$SB"' "$(ghout)"
   OUT=$(cd "$CR" && node scripts/check-version.mjs main 2>&1); RC=$?

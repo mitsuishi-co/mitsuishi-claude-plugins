@@ -82,7 +82,7 @@ git の判定: 対象ファイルのパスの `\` を `/` に直し、存在す�
 - 自社プラグイン: 管理設定の `extraKnownMarketplaces` で 2 つのマーケットプレイス（mitsuishi・claude-plugins-official）を `autoUpdate: true`。プラグインは 4 つ（mitsuishi-dev・superpowers・frontend-design・claude-security）。Claude Code はセッションを始めるたびに更新を確かめ、次の起動で新版になる
 - 自社プラグインの版: `plugin.json` と marketplace.json の `version` は残す。`plugins/mitsuishi-dev/` を変えたら両方を上げ、CHANGELOG.md に 1 行足す（上げないと届かない。CI で検査）
 - **上流は版を固定する**（利用者の判断、2026-11-07 最終関門）:
-  - superpowers: marketplace.json で `obra/superpowers` を `sha` で固定する
+  - superpowers: marketplace.json で `obra/superpowers` を url（HTTPS）と `sha` で固定する（`{"source":"url","url":"https://github.com/obra/superpowers.git","sha":…}`）。github 形式は SSH で clone され、SSH の鍵が無い PC で入らないため使わない
   - gstack: 固定する sha を `plugins/mitsuishi-dev/pins.json` に置く。gstack-bg.sh は導入・更新のとき、その sha を checkout して `./setup -q --no-plan-tune-hooks` を実行する（`gstack-upgrade` は使わない）。gstack 自身の `auto_upgrade` は `false` にそろえる（スキル実行時に最新へ上がって固定を外さないため）
   - CI が毎日、両方の上流の最新の sha を調べ、変わっていれば「固定を上げる PR」を自動で作る（版を上げ、CHANGELOG に 1 行、テストを回す）。PR は CI が通れば自動で取り込まれ（`gh pr merge --auto --squash`、`BUMP_TOKEN` で）、全員へ届く（利用者の判断、2026-11-08）
   - 自動の取り込みには、リポジトリ設定の「Allow auto-merge」と、main の保護で CI のジョブを必須チェックに指定することが要る（必須チェックが無いと CI を待たずに即取り込まれる）

@@ -10,6 +10,8 @@
 - [ ] GitHub に `mitsuishi-co/mitsuishi-claude-plugins`（公開）を作って push し、main を保護ブランチにする（PR 必須・CI 必須・force push 禁止）
 - [ ] GitHub Actions の secret を置く: `FORBIDDEN_WORDS`（禁止語。改行かカンマ区切り。未設定なら検査を飛ばす）・`BUMP_TOKEN`（必須。このリポジトリの Contents と Pull requests に書き込める fine-grained トークン。無いと「上流の固定を上げる」ジョブが失敗して知らせる。既定のトークンで作った PR では CI が走らず取り込めないため）。秘密の検査（gitleaks）は本体を直接実行するのでライセンスキーは要らない
 - [ ] claude.ai の「組織設定 > Claude Code > 管理設定」（Owner 権限）に `admin/managed-settings.json` を貼って保存する。次のセッション開始時に全員へ入り、利用者は無効にできない
+- [ ] 社員の PC に Git for Windows が要る（フックと gstack の導入が Git Bash で動く）
+- [ ] 管理設定で入ったプラグインが「無効」で届くことがある。設定 → プラグインの「…」→「オンにする」で有効にする（CLI なら `claude plugin enable <名前>`）
 - [ ] 実行役（`executor`）に git の中のコードを 5 行以上 Write させて止まらないことを確かめる（フックの入力に `agent_id` が付いている）。メインに同じことをさせると `MITSUISHI-EDIT-001` で止まる
 - [ ] 管理設定の `env` に `MITSUISHI_HOOKS_OFF` を入れたとき、各 PC のフックが止まることを 1 台で確かめる（下の「全員を止める」）
 - [ ] 開発に使う PC で、git のリポジトリの中で Claude Code を起動し、裏の gstack の導入がセッション終了後も完了して `~/.claude/mitsuishi-dev/state` に書かれることを確かめる（Windows を含む）
@@ -39,7 +41,7 @@
   - エージェント `executor`（実行役）・`ui-executor`（画面専用の実行役、起動時に frontend-design を読み込む）・`advisor`（相談役）・`outside-voice`（外部レビュー役）
   - フックで止めるのは、メインのコード編集・メインによる Claude の設定とエージェント定義の編集・実行役からの再委託・advisor 以外への最上位モデルの指定だけ（下の「フックに止められたとき」）。フックは促しであり仕切りではない（Bash・PowerShell 経由の書き換え、2 行 Edit の連打、model を定義にも持たない起動は止めない）
   - セッション開始時にワークフロー規則と `MODELS.md` と gstack の状態を注入し、git のリポジトリの中で始めたときだけ gstack の導入・毎日の更新を裏で行う（セッションは待たない）
-- **superpowers**（`obra/superpowers` を `sha` で固定）
+- **superpowers**（`obra/superpowers` を url（HTTPS）と `sha` で固定）
   - 使うのは `test-driven-development`・`systematic-debugging`・`verification-before-completion`・`receiving-code-review` の 4 つだけ
   - superpowers だけ止める: 管理設定の `enabledPlugins` で `"superpowers@mitsuishi": false` にする
 - **frontend-design**・**claude-security**（Anthropic 公式マーケットプレイス `claude-plugins-official`。公式の更新に追従）
