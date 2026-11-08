@@ -8,7 +8,7 @@
             "type": "command",
             "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/session-start\"",
             "shell": "bash",
-            "timeout": 900
+            "timeout": 30
           }
         ]
       }
@@ -30,7 +30,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-subagent-model\"",
+            "command": "bash \"${CLAUDE_PLUGIN_ROOT}/hooks/guard-subagent\"",
             "shell": "bash",
             "timeout": 10
           }

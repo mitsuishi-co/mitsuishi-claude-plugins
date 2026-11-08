@@ -1,97 +1,140 @@
 # mitsuishi-claude-plugins
 
-社内用の Claude Code プラグイン置き場（マーケットプレイス）です。
-管理設定で全員に配布し、Claude Code を使うときは必ず次の内容が適用されるようにします。
+社内用の Claude Code プラグイン置き場（マーケットプレイス `mitsuishi`）です。管理設定で全員に配布し、Claude Code を使うときは必ず適用されるようにします。
+**このリポジトリは公開です**（中身は社内ルールだけで秘密を含まず、公開にすることで社員側の認証設定を不要にしています）。個人名・社内システムの情報・秘密は書かないでください。
+仕様の正本は `DECISIONS.md`、変更の記録は `CHANGELOG.md` です。
+
+## 管理者の導入チェックリスト
+
+- [ ] **壊れたときは、管理設定の `enabledPlugins` で `"mitsuishi-dev@mitsuishi": false` にする**（全員のフック・注入が止まる。直したら `true` に戻す）
+- [ ] GitHub に `mitsuishi-co/mitsuishi-claude-plugins`（公開）を作って push し、main を保護ブランチにする（PR 必須・CI 必須・force push 禁止）
+- [ ] GitHub Actions の secret を置く: `FORBIDDEN_WORDS`（禁止語。改行かカンマ区切り。未設定なら検査を飛ばす）・`BUMP_TOKEN`（必須。このリポジトリの Contents と Pull requests に書き込める fine-grained トークン。無いと「上流の固定を上げる」ジョブが失敗して知らせる。既定のトークンで作った PR では CI が走らず取り込めないため）。秘密の検査（gitleaks）は本体を直接実行するのでライセンスキーは要らない
+- [ ] claude.ai の「組織設定 > Claude Code > 管理設定」（Owner 権限）に `admin/managed-settings.json` を貼って保存する。次のセッション開始時に全員へ入り、利用者は無効にできない
+- [ ] 実行役（`executor`）に git の中のコードを 5 行以上 Write させて止まらないことを確かめる（フックの入力に `agent_id` が付いている）。メインに同じことをさせると `MITSUISHI-EDIT-001` で止まる
+- [ ] 管理設定の `env` に `MITSUISHI_HOOKS_OFF` を入れたとき、各 PC のフックが止まることを 1 台で確かめる（下の「全員を止める」）
+- [ ] 開発に使う PC で、git のリポジトリの中で Claude Code を起動し、裏の gstack の導入がセッション終了後も完了して `~/.claude/mitsuishi-dev/state` に書かれることを確かめる（Windows を含む）
+- [ ] gstack の導入・更新の後、`~/.claude/settings.json` に余計なフックが増えていないことを確かめる
+- [ ] `ui-executor` を起動し、読み込まれたスキルの名前を聞くと `frontend-design` が含まれることを確かめる（`claude --debug` の出力に frontend-design と skip を含む行が無い）
+- [ ] 1 か月後に、全員の既定 `best` の利用量を確かめる（管理設定の `model` は部署ごとに分けられない）
+- [ ] リポジトリの設定（Settings > General）で「Allow auto-merge」を有効にし、main の保護で CI のジョブを必須チェック（Require status checks）に指定する（「上流の固定を上げる」PR は CI が通ると自動で取り込まれる。**必須チェックが無いと CI を待たずに即取り込まれる**）
+- [ ] 「上流の固定を上げる」PR の `bump-upstream` ブランチには手で積まない（翌日の実行で上書きされる）。直したいことがあれば別のブランチで PR を出す
+- [ ] 各 PC の前提ツール（gstack の導入に使う。足りなければセッション開始時の状態行に出る）
+
+| ツール | 入れ方 |
+|---|---|
+| Git | 通常は導入済み（無いとメインの編集ガードも効かない） |
+| Bun | macOS / Linux: `curl -fsSL https://bun.sh/install | bash`／Windows: `powershell -c "irm bun.sh/install.ps1 | iex"` |
+| Node.js | Windows のみ。https://nodejs.org/ |
+
+### 旧版（2.1 まで）からの移行
+
+1. 停止の環境変数は `MITSUISHI_HOOKS_OFF` の 1 つになった（編集ガードだけなら `planner-edit`）。2.1 までの `…_ALLOW_PLANNER_EDIT` は効かない
+2. gstack は自動更新（`auto_upgrade: true`）をやめ、このプラグインが固定の版に合わせる（gstack の設定は `auto_upgrade: false` に直す）
+3. 編集ガードは git のリポジトリの中のファイルだけが対象になった（デスクトップなどの git の外は止めない）
+
+## 中身
 
 - **mitsuishi-dev**（自社製）
-  - プランナー（メインのセッション＝Fable）と実行役（サブエージェント）を分ける
-    - プランナーがコードを直接編集しようとするとフックで止め、実行役への委任を促す
-    - サブエージェントに Fable を指定しようとするとフックで止める
-  - 社内標準の開発ワークフロー（gstack × Superpowers の分担ルール）を、毎セッション開始時に注入する
-  - gstack が未導入なら自動で導入し、導入済みならセッション開始のたびに最新版へ更新する
-- **superpowers**（obra/superpowers、MIT）
-  - 計画書作成、サブエージェントによる実行、TDD、2段階レビュー
+  - メイン（プランナー）と実行役（サブエージェント）の分担。モデルは別名で書き、対応表は `MODELS.md` の 1 か所
+  - エージェント `executor`（実行役）・`ui-executor`（画面専用の実行役、起動時に frontend-design を読み込む）・`advisor`（相談役）・`outside-voice`（外部レビュー役）
+  - フックで止めるのは、メインのコード編集・メインによる Claude の設定とエージェント定義の編集・実行役からの再委託・advisor 以外への最上位モデルの指定だけ（下の「フックに止められたとき」）。フックは促しであり仕切りではない（Bash・PowerShell 経由の書き換え、2 行 Edit の連打、model を定義にも持たない起動は止めない）
+  - セッション開始時にワークフロー規則と `MODELS.md` と gstack の状態を注入し、git のリポジトリの中で始めたときだけ gstack の導入・毎日の更新を裏で行う（セッションは待たない）
+- **superpowers**（`obra/superpowers` を `sha` で固定）
+  - 使うのは `test-driven-development`・`systematic-debugging`・`verification-before-completion`・`receiving-code-review` の 4 つだけ
+  - superpowers だけ止める: 管理設定の `enabledPlugins` で `"superpowers@mitsuishi": false` にする
+- **frontend-design**・**claude-security**（Anthropic 公式マーケットプレイス `claude-plugins-official`。公式の更新に追従）
 
 ## 構成
 
 ```
-.claude-plugin/marketplace.json        マーケットプレイス定義（名前: mitsuishi）
+.claude-plugin/marketplace.json        マーケットプレイス定義（名前: mitsuishi。superpowers の sha の固定もここ）
 plugins/mitsuishi-dev/
   .claude-plugin/plugin.json
-  hooks/hooks.json                      フックの登録
-  hooks/session-start                   gstack の導入・更新とルール注入
-  hooks/guard-planner-edit              プランナーによるコード編集を止める
-  hooks/guard-subagent-model            サブエージェントへの Fable 指定を止める
-  skills/workflow/SKILL.md              分担ルール本体（ここを編集すれば全員に反映）
+  MODELS.md                             モデル別名の対応表と最上位の判定行（新モデル時はここだけ直す）
+  pins.json                             gstack の固定する sha
+  agents/                               executor・ui-executor・advisor・outside-voice
+  hooks/hooks.json                      フックの登録（SessionStart は 30 秒）
+  hooks/session-start                   ルールと状態の注入、裏の gstack の導入・更新の起動
+  hooks/guard-planner-edit              メインのコード編集・Claude の設定とエージェント定義の編集を止める
+  hooks/guard-subagent                  再委託と最上位モデルの誤指定を止める
+  hooks/lib/common.sh                   共通関数（JSON の読み取り・git の判定・ログ・拒否文）
+  hooks/lib/gstack-bg.sh                gstack の導入・更新（裏で動く。状態ファイル・ロック・打ち切り）
+  hooks/lib/json-flatten.awk            JSON の読み取り（jq 不要）
+  skills/workflow/SKILL.md              ワークフロー規則の本体
 admin/managed-settings.json             管理画面に貼り付ける設定
+scripts/                                CI の検査（版・JSON・禁止語）と上流の固定を上げるスクリプト
+.github/workflows/ci.yml                CI（ubuntu と windows）
+.github/workflows/bump-upstream.yml     上流の固定を上げる PR を毎日つくり、CI が通ったら自動で取り込む
+tests/run-hooks-test.sh                 フックと CI のスクリプトの動作確認（ネットワークに出ない）
 ```
 
-## 導入手順（管理者が1回だけ）
+## フックに止められたとき
 
-### 1. GitHub にリポジトリを作る
+拒否文の 1 行目の識別子で見分けます。どれも PC の中の `~/.claude/mitsuishi-dev/hooks.log` に 1 行残ります。
 
-このフォルダ一式を `mitsuishi-claude-plugins` という名前で GitHub に push します。
+- **`MITSUISHI-EDIT-001`**: メイン（プランナー）が git のリポジトリの中のコードを直接編集しようとした。実行役（`executor`、画面は `ui-executor`）に指示書を渡して委任する。次のものは止めない: 文書（`*.md`・`*.markdown`、ファイル名がちょうど `VERSION`・`CHANGELOG`・`TODOS` か、それに `.md`・`.txt` が付いたもの。`todos.ts` などは文書に入らない）／old_string・new_string がどちらも 2 行以内かつ 300 バイト以内の Edit（`replace_all` を除く。MultiEdit は合計で 2 行・300 バイト）／git の外のファイル。2 行ずつに分けて回避しない
+- **`MITSUISHI-EDIT-002`**: メインが Claude の設定・エージェント定義・ガード自身・git の管理フォルダを編集しようとした。対象は、パスに `.claude/` を含む `settings*.json`／`.claude/agents/` の下（サブフォルダも）／`.claude/plugins/` の下すべて／`.claude.json`／`.mcp.json`／このプラグイン自身のフォルダの下／プラグインの `agents/` の下／パスに `/.git/` を含むもの（git のフックや設定）／長すぎて切り詰められたパス。パスは判定の前に正規化する（`\` を `/` に、`//`・`/./`・`..` をつぶす、末尾のドット・空白と `:` 以降（代替データストリーム）を落とす、大文字小文字を区別しない）。git の内外・行数・文書の例外に関係なく止める（AI が自分でガードを外したり、最上位モデルの制限を回り込んだりしないため）。利用者が手で直すか、実行役に回す
+- **`MITSUISHI-AGENT-001`**: 実行役（サブエージェント）がさらにサブエージェントを起動しようとした（再委託禁止）。実行役は自分の手で行い、分ける必要があれば「要判断」としてメインに返す
+- **`MITSUISHI-AGENT-002`**: `advisor` 以外に最上位モデルを指定した（`MODELS.md` の `TOP_ALIASES` の別名か `TOP_PREFIXES` の正式名の前方一致）。`model` を省いたときは、エージェント定義（プロジェクトの `.claude/agents/`（cwd から git のルートまで上って探す）・`~/.claude/agents/`（どちらもサブフォルダも）・`~/.claude/plugins/` の下の各プラグインの `agents/`）から frontmatter の `name:` が一致するもの（`<プラグイン>:<名前>` ならそのプラグインのもの）を探し、その `model` で判定する（YAML のコメント・引用符は取り除く）。advisor として通すのは `advisor` と `mitsuishi-dev:advisor` だけ。実行役には `opus`・`sonnet`・`haiku` を指定する
+- `MITSUISHI-FAIL-*`（ログだけ）: フックが判定できずに通した（`LIB` = 共通関数を読めない／`JSON` = 入力を読めない・文字列の中に生の改行や制御文字がある／`GIT` = git が無い・git の判定に失敗）
 
-- 非公開リポジトリにする場合は、Claude Code を使う社員全員にそのリポジトリの読み取り権限が必要です（各PCの git がそのまま clone するため）。
-- 中身は社内ルールのみで機密情報を含まないため、公開リポジトリにすると権限管理が不要になります。
+拒否文と注入文には止め方を書いていません（AI が自分でガードを外さないため）。止める必要があると AI が判断したときは、利用者に相談するよう促します。
 
-### 2. 管理設定に貼り付ける
+どうしても止めるときは、人が環境変数 `MITSUISHI_HOOKS_OFF` を付けて Claude Code を起動し直します。
 
-1. `admin/managed-settings.json` の `YOUR-GITHUB-ORG` を実際の GitHub の組織名（またはユーザー名）に置き換える
-2. claude.ai の「組織設定 > Claude Code > 管理設定」を開く（Owner 権限が必要）
-3. JSON を貼り付けて保存する
+| 値 | 止まるもの |
+|---|---|
+| `1` か `all` | 全部 |
+| `planner-edit`・`subagent`・`session-start`（カンマ区切りで複数可） | そのフックだけ |
+| 空・`0`・`false`・`no`・`off`・`none` | 止めない（全部動く） |
+| それ以外の値 | 全部（打ち間違いでも止まる側に倒す） |
 
-保存すると、組織の全メンバーの次回セッション開始時に、プラグインが自動でインストールされます。
-メンバー側では無効化できません。
+空白・大文字小文字は区別しません。
 
-### 3. 各PCの前提ツール
+### 全員を止める（管理者）
 
-gstack の導入に次のツールが必要です。足りない場合、Claude Code がセッション開始時に案内します。
+管理設定の `env` に次の 1 行を足して保存すると、次のセッションから全員のフックが止まります（効くことを導入時に確かめる。効かない旧版では `enabledPlugins` の `mitsuishi-dev@mitsuishi` を `false` にする）。
 
-| ツール | 用途 | 入れ方 |
-|---|---|---|
-| Git | gstack の取得・更新 | 通常は導入済み |
-| Bun（1.4.2 以上を推奨） | gstack のビルド | macOS / Linux: `curl -fsSL https://bun.sh/install \| bash`<br>Windows: `powershell -c "irm bun.sh/install.ps1 \| iex"` |
-| Node.js | Windows のみ必要 | https://nodejs.org/ |
+```json
+"env": { "CLAUDE_CODE_SUBAGENT_MODEL": "opus", "MITSUISHI_HOOKS_OFF": "1" }
+```
 
-Intune で配布する場合は、上記を必須アプリに含めておくと手間がありません。
+### 版を戻す（管理者）
 
-## モデルの設定
+直した版を出すのが基本です。急ぐときは、前の版の中身に戻して版を上げて出します（版を下げると各 PC に届かない）。
 
-管理設定で次のように指定しています。
+```bash
+git switch -c revert-plugin origin/main
+git checkout <戻したい版のコミット> -- plugins/mitsuishi-dev
+# plugin.json と marketplace.json の version を今より大きくし、CHANGELOG.md の先頭に 1 行足す
+bash tests/run-hooks-test.sh && node scripts/check-version.mjs origin/main
+git commit -am "mitsuishi-dev を <戻したい版> の中身に戻す" && git push -u origin revert-plugin   # PR を作って取り込む
+```
 
-- `model`：メインのセッション（プランナー）のモデル。`claude-fable-5-1`
-- `env.CLAUDE_CODE_SUBAGENT_MODEL`：サブエージェント（実行役）でモデル指定がないときの既定値。`claude-opus-5-5`
+## 更新の仕組み
 
-Superpowers は作業の難しさに応じて haiku・sonnet・opus を使い分けて実行役を起動します。この使い分けは活かしたまま、Fable だけを実行役から締め出しています。
-全サブエージェントを1つのモデルに固定したい場合は、`env` に `"CLAUDE_CODE_SUBAGENT_MODEL_FORCE": "1"` を追加します。
+- **自社プラグイン**: 管理設定の 2 つのマーケットプレイスは `autoUpdate: true`。Claude Code はセッション中に更新を確かめ、次の起動で新版になる。`plugins/mitsuishi-dev/` を変えたら `plugin.json` と `marketplace.json` の `version` を上げ、`CHANGELOG.md` の先頭に 1 行足す（**上げないと届かない**。CI が検査する）
+- **上流は版を固定する**: superpowers は `marketplace.json` の `sha`、gstack は `plugins/mitsuishi-dev/pins.json` の `sha`。CI（`bump-upstream.yml`）が毎日両方の最新を調べ、変わっていれば「上流の固定を上げる」PR を作り、CI が通れば自動で取り込まれ（auto-merge、squash）、全員へ届く（本文に上流ごとの compare のリンク）。CI は自社のフックを確かめるだけで、上流の中身は確かめない
+  - **上流で不具合が出たら**: その取り込みコミット（「上流の固定を上げる」）を revert し、mitsuishi-dev の版は今より上げて CHANGELOG に 1 行足して PR で出す（下の「版を戻す」と同じ。版を下げると届かない）。固定が前の sha に戻り、全員が前の版に戻る。ただし superpowers は版が上流の plugin.json で決まるため、revert で版が下がると届かない。superpowers を止めるときは管理設定の `enabledPlugins` で `false` にする
+  - **superpowers は上流の `version` が変わったときだけ上げる**: Claude Code は plugin.json の `version` で更新を判断し、superpowers は自分の plugin.json に `version` を持つ（マーケットプレイス側の `version` より優先される）。sha だけ上げても各 PC には届かないため、上流の `version` が同じか確かめられないときは superpowers の sha を変えない（gstack だけが変わっていれば gstack だけ上げる）
+  - PR は secret `BUMP_TOKEN` で作る。無ければジョブが失敗して知らせる。`bump-upstream` ブランチには手で積まない
+- **gstack**: セッションを git のリポジトリの中で始めたときだけ、裏で（`hooks/lib/gstack-bg.sh`）動く。gstack の今の HEAD が固定の sha と違えば（固定が上がった・未導入・前回が未完了）すぐ、固定の sha を checkout して `./setup -q --no-plan-tune-hooks` を実行する。同じなら、前回の成功から 24 時間ごとに設定を `auto_upgrade: false`・`codex_reviews: disabled`・`telemetry: off` にそろえるだけ。失敗から 1 時間未満は何もしない。打ち切りは初回の導入 900 秒・更新 300 秒。`gstack-upgrade` は使わない。ログは `~/.claude/mitsuishi-dev/gstack.log`、状態は `~/.claude/mitsuishi-dev/state`
+  - 自分で入れていた gstack（HEAD が固定と違う）は固定の版で上書きし、その日の状態行で一度だけ知らせる
+  - 3 回続けて失敗するとセッション開始時の状態行に出る。手で直すときは状態行に出る手順（`cd ~/.claude/skills/gstack && rm -f .git/index.lock && { git stash -u || true; } && git fetch --depth 1 <repo> <sha> && git checkout --detach <sha> && ./setup -q --no-plan-tune-hooks`）を実行する。`git stash -u` は手で変えたファイルを退避する（`git stash list` で確かめられる）
 
-組織のプランで Claude Code から Fable を使えるかは、事前に `/model` で確認してください。
+## モデル
+
+- 管理設定の `model` は `best`（最上位。使えない環境では `opus` と同じモデルになる）。メインは一段下（`opus`）に切り替えてもよい
+- サブエージェントの既定はエージェント定義で決まる（executor・ui-executor・outside-voice = opus、advisor = fable）。定義に `model` を持たない汎用のエージェントも最上位を継がないよう、管理設定の `env` に `CLAUDE_CODE_SUBAGENT_MODEL=opus` を置く。`CLAUDE_CODE_SUBAGENT_MODEL_FORCE` は使わない
+- 新しいモデルが出たら `plugins/mitsuishi-dev/MODELS.md` だけを直して版を上げる
 
 ## 動作確認
 
-社員のPCで Claude Code を起動し、次を確認します。
-
-- `/plugin` に `mitsuishi-dev` と `superpowers` が表示され、管理設定由来（managed）になっている
-- `/status` の Setting sources に `Enterprise managed settings` が含まれている
-- `~/.claude/mitsuishi-dev/gstack.log` に gstack の導入・更新の記録がある
-- メインのセッションで「src 以下のファイルを1行直して」と頼むと、直接は編集されず実行役への委任に切り替わる
-
-初回のセッション開始時は gstack のビルドが走るため、数分かかることがあります。
+- 手元: `bash tests/run-hooks-test.sh`（偽の git・setup で動き、gstack とネットワークには触らない）・`node scripts/check-version.mjs main`・`claude plugin validate .`
+- 社員の PC: `/plugin` に `mitsuishi-dev` と `superpowers` が管理設定由来で出る／`/status` に Enterprise managed settings が出る／git のリポジトリの中でメインに「src のファイルを 5 行直して」と頼むと `MITSUISHI-EDIT-001` で止まり、実行役への委任に切り替わる
 
 ## ルールを変えるとき
 
-1. `plugins/mitsuishi-dev/skills/workflow/SKILL.md` を編集する
-2. `plugins/mitsuishi-dev/.claude-plugin/plugin.json` と `.claude-plugin/marketplace.json` の `version` を上げる
-3. push する
-
-`autoUpdate: true` にしているため、各PCには自動で反映されます。
-
-## 注意事項
-
-- **プランナーの編集制限は、Edit／Write などの編集ツールに対するものです。** シェルコマンド経由の書き換えまでは止めません（ルールでは禁止しています）。緊急時は環境変数 `MITSUISHI_ALLOW_PLANNER_EDIT=1` を付けて起動すると制限を外せます。
-
-- **gstack は毎セッション開始時に更新されます。** 更新は gstack 公式の無人アップデータ（`bin/gstack-upgrade`）で行い、gstack の stable チャンネル（タグ付きリリース）に追従します。オフラインなどで更新できなかった場合もセッションは止まらず、Claude が利用者にその旨を伝えます。
-- **Superpowers は作者のリポジトリを直接参照しています。** 作者側の更新がそのまま全員に配られます。版を固定したい場合は、自社でフォークして `marketplace.json` の `repo` をフォーク先に変えてください。
-- **管理画面からの設定は組織全員に一律で適用されます。** 部署ごとに分けることはできません。
-- 許可するマーケットプレイスを公式と自社のみに絞りたい場合は、管理設定に `strictKnownMarketplaces` を追加します（Claude Code 公式ドキュメント「Manage Claude Code plugins for your organization」参照）。
+1. `DECISIONS.md` を先に直す
+2. `skills/workflow/SKILL.md`（必要ならフック・`MODELS.md`）を直し、`bash tests/run-hooks-test.sh` を通す
+3. `plugin.json` と `marketplace.json` の `version` をそろえて上げ、`CHANGELOG.md` に 1 行足して PR を出す

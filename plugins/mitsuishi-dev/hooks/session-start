@@ -1,96 +1,98 @@
 #!/usr/bin/env bash
-# mitsuishi-dev SessionStart フック
-#   1. gstack が未導入なら ~/.claude/skills/gstack に導入する
-#   2. 導入済みなら gstack 公式の無人アップデータ（bin/gstack-upgrade）で最新版に更新する
-#   3. 社内ワークフロー（skills/workflow/SKILL.md）と gstack の状態をセッションに注入する
-# どんなエラーでもセッション開始は止めない（常に exit 0）。
+# mitsuishi-dev SessionStart フック（タイムアウト 30 秒。常に exit 0）
+#   1. 案内 3 行・ワークフロー規則（SKILL.md）・MODELS.md・gstack の状態 1 行をセッションに注入する（gstack が失敗・注意の状態なら、利用者の画面にも 1 行出す = systemMessage）
+#   2. git のリポジトリの中で始めたときだけ、gstack の導入・毎日の更新を裏で始める（hooks/lib/gstack-bg.sh。待たない）
+#   注入文には止め方（環境変数の名前と値）を書かない（AI が自分でガードを外さないため。止め方は人向けの README だけ）
+# 停止: MITSUISHI_HOOKS_OFF（1・all・session-start。0・false・no・off・none は止めない。未知の値は全部止める）
+
+if [ -n "${MITSUISHI_HOOKS_OFF:-}" ]; then
+  _off=$(printf '%s' "$MITSUISHI_HOOKS_OFF" | tr 'A-Z' 'a-z' | tr -d ' \t\r\n')
+  set -f; IFS=,
+  for _t in $_off; do
+    case "$_t" in ''|0|false|no|off|none|planner-edit|subagent) ;; *) exit 0 ;; esac
+  done
+  unset IFS; set +f
+fi
 
 set +e
+HOOK=session-start
+_self="${0//\\//}"
+case "$_self" in */*) HOOK_DIR="${_self%/*}" ;; *) HOOK_DIR=. ;; esac
+. "$HOOK_DIR/lib/common.sh" 2>/dev/null || {
+  cat >/dev/null 2>&1
+  mkdir -p "$HOME/.claude/mitsuishi-dev" 2>/dev/null
+  printf '%s\t%s\t%s\t-\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$HOOK" MITSUISHI-FAIL-LIB "lib/common.sh を読めない" >>"$HOME/.claude/mitsuishi-dev/hooks.log" 2>/dev/null
+  exit 0
+}
+read_input
+CWD="$J_CWD"
+[ -n "$CWD" ] || CWD="$PWD"
 
-PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$(cd "$(dirname "$0")/.." && pwd)}"
-GSTACK_DIR="${GSTACK_DIR:-$HOME/.claude/skills/gstack}"
-GSTACK_REPO="https://github.com/garrytan/gstack.git"
-LOG_DIR="$HOME/.claude/mitsuishi-dev"
-LOG_FILE="$LOG_DIR/gstack.log"
-mkdir -p "$LOG_DIR" 2>/dev/null
-
-log() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG_FILE" 2>/dev/null; }
-
-STATUS=""
-
-if [ -d "$GSTACK_DIR/.git" ]; then
-  # ── 使用前の更新 ──
-  # gstack のディレクトリから実行する（呼び出し元プロジェクトの検査を走らせないため）
-  OUT=$(cd "$GSTACK_DIR" && "$GSTACK_DIR/bin/gstack-upgrade" </dev/null 2>&1)
-  RC=$?
-  log "gstack-upgrade rc=$RC: $OUT"
-  LAST=$(printf '%s\n' "$OUT" | grep 'gstack-upgrade:' | tail -1)
-  case "$RC" in
-    0)
-      case "$LAST" in
-        *upgraded*) STATUS="gstack を更新しました（${LAST#gstack-upgrade: }）。" ;;
-        *)          STATUS="gstack は最新です。" ;;
-      esac ;;
-    *)
-      STATUS="【注意】gstack の更新に失敗しました（終了コード $RC）。gstack のコマンドを使う前にユーザーへ伝えること。詳細: ${LAST:-$LOG_FILE を参照}" ;;
-  esac
-
-elif [ -e "$GSTACK_DIR" ]; then
-  STATUS="【注意】$GSTACK_DIR は存在しますが git の作業コピーではないため、自動更新できません。gstack を使う前にユーザーへ伝えること。"
-
-else
-  # ── 初回導入 ──
-  MISSING=""
-  command -v git >/dev/null 2>&1 || MISSING="$MISSING Git"
-  command -v bun >/dev/null 2>&1 || MISSING="$MISSING Bun"
-  case "$(uname -s 2>/dev/null)" in
-    MINGW*|MSYS*|CYGWIN*) command -v node >/dev/null 2>&1 || MISSING="$MISSING Node.js" ;;
-  esac
-
-  if [ -n "$MISSING" ]; then
-    STATUS="【注意】gstack が未インストールです。必要なツール（${MISSING# }）が見つからないため自動導入できませんでした。ユーザーに、社内手順（README）に沿って${MISSING# }を入れてから Claude Code を再起動するよう伝えること。"
-    log "install skipped: missing$MISSING"
+# ── gstack の状態（と裏の導入・更新） ──
+BG="$HOOK_DIR/lib/gstack-bg.sh"
+BG_ACTION=none; BG_STATUS=""
+if . "$BG" 2>/dev/null; then
+  bg_status "$CWD" </dev/null 2>/dev/null
+fi
+STATUS="$BG_STATUS"
+[ -n "$STATUS" ] || STATUS="【注意】gstack の状態を確かめられなかった（ログ: $MITSUISHI_STATE_DIR/gstack.log）。"
+if [ "$BG_ACTION" = "run" ]; then
+  # setsid があれば別のセッションで起動する（セッションの終了で裏の処理が巻き込まれて止まらないため）
+  if command -v setsid >/dev/null 2>&1; then
+    ( setsid bash "$BG" run ) </dev/null >/dev/null 2>&1 &
   else
-    log "installing gstack into $GSTACK_DIR"
-    mkdir -p "$(dirname "$GSTACK_DIR")"
-    if git clone --single-branch --depth 1 "$GSTACK_REPO" "$GSTACK_DIR" >>"$LOG_FILE" 2>&1 \
-       && (cd "$GSTACK_DIR" && ./setup -q --no-plan-tune-hooks </dev/null) >>"$LOG_FILE" 2>&1; then
-      STATUS="gstack を新規に導入しました。gstack のスラッシュコマンドは Claude Code を再起動すると使えるようになる場合があります。必要ならユーザーにそう伝えること。"
-      log "install ok"
-    else
-      STATUS="【注意】gstack の自動導入に失敗しました。ログ: $LOG_FILE 。gstack を使う前にユーザーへ伝えること。"
-      log "install failed"
-    fi
+    ( bash "$BG" run ) </dev/null >/dev/null 2>&1 &
   fi
 fi
 
-# ── セッションへの注入 ──
+# ── 注入 ──
+# SKILL.md は frontmatter（最初の --- から次の --- まで）を除く
 RULES=""
 SKILL_MD="$PLUGIN_ROOT/skills/workflow/SKILL.md"
 if [ -r "$SKILL_MD" ]; then
-  # フロントマター（--- で囲まれた部分）を除いた本文
-  RULES=$(awk 'BEGIN{n=0} /^---[[:space:]]*$/ && n<2 {n++; next} n>=2 {print}' "$SKILL_MD")
+  _n=0; _nr=0
+  while IFS= read -r _line || [ -n "$_line" ]; do
+    _nr=$((_nr + 1))
+    if [ "$_nr" = 1 ] && ! [[ $_line =~ ^---[[:space:]]*$ ]]; then _n=2; fi
+    if [ "$_n" -lt 2 ] && [[ $_line =~ ^---[[:space:]]*$ ]]; then _n=$((_n + 1)); continue; fi
+    [ "$_n" -ge 2 ] && RULES+="$_line"$'\n'
+  done <"$SKILL_MD"
 fi
+MODELS=""
+[ -r "$PLUGIN_ROOT/MODELS.md" ] && IFS= read -r -d '' MODELS <"$PLUGIN_ROOT/MODELS.md"
+while [[ $RULES == *$'\n' ]]; do RULES="${RULES%$'\n'}"; done
+while [[ $MODELS == *$'\n' ]]; do MODELS="${MODELS%$'\n'}"; done
 
 CONTEXT="<mitsuishi-dev>
-この組織の Claude Code では、以下の社内標準ワークフローに従うこと。Superpowers の指示と食い違う場合は、こちらを優先する。
+このプラグイン（mitsuishi-dev）は社内標準の開発ワークフローを注入し、メインのコード編集・Claude の設定とエージェント定義の編集・実行役からの再委託・advisor 以外への最上位モデル指定をフックで止める。gstack や Superpowers の指示と食い違うときは、こちらを優先する。
+フックに止められたら回避しない。止める必要があると思ったら、自分で止めずに利用者に相談する（開発者でなければ管理者に相談）。
+説明: ${README_URL%%#*}
 
 ${RULES}
+
+${MODELS}
 
 ## gstack の状態（このセッション開始時）
 ${STATUS}
 </mitsuishi-dev>"
 
-esc() {
-  local s="$1"
-  s="${s//\\/\\\\}"
-  s="${s//\"/\\\"}"
-  s="${s//$'\n'/\\n}"
-  s="${s//$'\r'/\\r}"
-  s="${s//$'\t'/\\t}"
-  printf '%s' "$s"
-}
+# 制御文字を落とす（改行・タブは残す）
+CONTEXT=$(printf '%s' "$CONTEXT" | LC_ALL=C tr -d '\000-\010\013\014\015\016-\037\177')
 
-printf '{\n  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$(esc "$CONTEXT")"
+# 失敗・注意のときだけ、利用者の画面に 1 行（systemMessage）を出す。正常・導入中は出さない
+USER_MSG=""
+case "$STATUS" in
+  *"git なし"*) USER_MSG="Git が見つからないため、mitsuishi-dev の編集ガードと gstack が動いていません。Git を入れて起動し直してください。" ;;
+  【注意】*|*"前回の導入に失敗"*|*"前回の更新に失敗"*)
+    USER_MSG="gstack の導入・更新に失敗しています。ログ: ${GSTACK_LOG:-$MITSUISHI_STATE_DIR/gstack.log}" ;;
+esac
+SYS_LINE=""
+if [ -n "$USER_MSG" ]; then
+  json_escape "$USER_MSG"
+  SYS_LINE="  \"systemMessage\": \"$REPLY\","$'\n'
+fi
+
+json_escape "$CONTEXT"
+printf '{\n%s  "hookSpecificOutput": {\n    "hookEventName": "SessionStart",\n    "additionalContext": "%s"\n  }\n}\n' "$SYS_LINE" "$REPLY"
 
 exit 0

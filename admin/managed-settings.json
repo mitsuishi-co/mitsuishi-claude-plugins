@@ -1,16 +1,22 @@
 {
-  "model": "claude-fable-5-1",
+  "model": "best",
   "env": {
-    "CLAUDE_CODE_SUBAGENT_MODEL": "claude-opus-5-5"
+    "CLAUDE_CODE_SUBAGENT_MODEL": "opus"
   },
   "extraKnownMarketplaces": {
     "mitsuishi": {
-      "source": { "source": "github", "repo": "YOUR-GITHUB-ORG/mitsuishi-claude-plugins" },
+      "source": { "source": "github", "repo": "mitsuishi-co/mitsuishi-claude-plugins" },
+      "autoUpdate": true
+    },
+    "claude-plugins-official": {
+      "source": { "source": "github", "repo": "anthropics/claude-plugins-official" },
       "autoUpdate": true
     }
   },
   "enabledPlugins": {
     "mitsuishi-dev@mitsuishi": true,
-    "superpowers@mitsuishi": true
+    "superpowers@mitsuishi": true,
+    "frontend-design@claude-plugins-official": true,
+    "claude-security@claude-plugins-official": true
   }
 }

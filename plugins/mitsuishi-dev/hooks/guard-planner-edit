@@ -1,22 +1,128 @@
 #!/usr/bin/env bash
 # PreToolUse（Edit / Write / MultiEdit / NotebookEdit）
-# プランナー（メインのセッション＝Fable）がコードを直接編集するのを止め、実行役（サブエージェント）へ委任させる。
-# サブエージェント内からの呼び出しには agent_id が付くので、それは通す。
-# 計画書・設計書などの文書（*.md、VERSION、CHANGELOG 等）はメインでも編集してよい。
-# 緊急時は環境変数 MITSUISHI_ALLOW_PLANNER_EDIT=1 で無効化できる。
+#   MITSUISHI-EDIT-002: メインによる次の編集は、git の内外・行数・文書の例外に関係なく止める
+#                       パスに .claude/ を含む settings*.json・.claude/agents/ の下・.claude/plugins/ の下・.claude.json・.mcp.json・
+#                       このプラグイン自身のフォルダ（CLAUDE_PLUGIN_ROOT）の下・プラグインの agents/ の下・/.git/ を含むもの・切り詰められたパス
+#                       判定の前にパスを正規化する（lib/common.sh の norm_path。大文字小文字は区別しない）
+#   MITSUISHI-EDIT-001: メイン（プランナー）による git のリポジトリの中のコード編集を止め、実行役へ委任させる
+#   - サブエージェント内（入力の最上位に agent_id がある）は通す
+#   - 文書（*.md・*.markdown、ファイル名がちょうど VERSION・CHANGELOG・TODOS か、それに .md・.txt が付いたもの）は通す。
+#     パスを切り詰めて読んだときは文書の例外に入れない
+#   - 軽微な修正の例外: Edit で old_string / new_string がどちらも 2 行以内かつ 300 バイト以内なら通す（replace_all は除く）
+#     MultiEdit は各 edit の行数（old と new の多い方）の合計が 2 行以内かつバイト数の合計が 300 バイト以内なら通す
+#   - git のリポジトリの外のファイルは通す。git が無い・判定に失敗したときも通す（ログに 1 行）
+# 停止: MITSUISHI_HOOKS_OFF（1・all・planner-edit。0・false・no・off・none は止めない。未知の値は全部止める）
 
-INPUT=$(cat)
+if [ -n "${MITSUISHI_HOOKS_OFF:-}" ]; then
+  _off=$(printf '%s' "$MITSUISHI_HOOKS_OFF" | tr 'A-Z' 'a-z' | tr -d ' \t\r\n')
+  set -f; IFS=,
+  for _t in $_off; do
+    case "$_t" in ''|0|false|no|off|none|subagent|session-start) ;; *) exit 0 ;; esac
+  done
+  unset IFS; set +f
+fi
 
-[ "${MITSUISHI_ALLOW_PLANNER_EDIT:-0}" = "1" ] && exit 0
-printf '%s' "$INPUT" | grep -q '"agent_id"[[:space:]]*:' && exit 0
+HOOK=planner-edit
+_self="${0//\\//}"
+case "$_self" in */*) _dir="${_self%/*}" ;; *) _dir=. ;; esac
+. "$_dir/lib/common.sh" 2>/dev/null || {
+  cat >/dev/null 2>&1
+  mkdir -p "$HOME/.claude/mitsuishi-dev" 2>/dev/null
+  printf '%s\t%s\t%s\t-\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$HOOK" MITSUISHI-FAIL-LIB "lib/common.sh を読めない" >>"$HOME/.claude/mitsuishi-dev/hooks.log" 2>/dev/null
+  exit 0
+}
 
-FILE=$(printf '%s' "$INPUT" | sed -n 's/.*"\(file_path\|notebook_path\)"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\2/p' | head -1)
-BASE="${FILE##*/}"; BASE="${BASE##*\\}"
-case "$BASE" in
-  *.md|*.MD|*.markdown|VERSION|CHANGELOG*|TODOS*) exit 0 ;;
+read_input
+TOOL="$J_TOOL"
+if [ -z "$TOOL" ] || [ "$J_ERR" = 1 ]; then
+  hook_log "$HOOK" MITSUISHI-FAIL-JSON - "入力の JSON を読めない"
+  exit 0
+fi
+
+# サブエージェント内は早めに抜ける
+[ -n "$J_AGENT_ID" ] && exit 0
+
+FILE="$J_FILE"; TRUNC="$J_FILE_TR"
+[ -n "$FILE" ] || { FILE="$J_NB"; TRUNC="$J_NB_TR"; }
+FP="${FILE//\\//}"
+
+# ── Claude の設定・エージェント定義・ガード自身・.git（MITSUISHI-EDIT-002） ──
+# パスは正規化してから（\→/、// ・/./・..、末尾のドット・空白、: 以降、大文字小文字）判定する。切り詰められたパスは止める
+norm_path "$FP" "$J_CWD"; AP="$NP"
+lower "$AP"; LP="$REPLY"
+norm_path "$PLUGIN_ROOT"; lower "$NP"; PRL="$REPLY"
+CFG=""
+[ "$TRUNC" = 1 ] && CFG="パスが長く切り詰められた"
+case "$LP" in
+  */.claude/*) case "${LP##*/}" in settings*.json) CFG="Claude の設定" ;; esac ;;
+esac
+case "${LP##*/}" in
+  .claude.json|.mcp.json) CFG="Claude の設定" ;;
+esac
+case "$LP" in
+  */.git/*) CFG="git のフック・設定（.git の下）" ;;
+  */.claude/agents/*) CFG="エージェント定義" ;;
+  */.claude/plugins/*) CFG="プラグイン（.claude/plugins の下）" ;;
+  "$PRL"/*) CFG="このプラグイン自身" ;;
+  */agents/*)
+    # プラグインの agents/（その上のフォルダに .claude-plugin がある）
+    for _p in "${AP%%/[Aa][Gg][Ee][Nn][Tt][Ss]/*}" "${AP%/[Aa][Gg][Ee][Nn][Tt][Ss]/*}"; do
+      [ -d "$_p/.claude-plugin" ] && { CFG="エージェント定義"; break; }
+    done ;;
+esac
+if [ -n "$CFG" ]; then
+  one_line "$FILE"
+  [ "${#REPLY}" -gt 300 ] && REPLY="${REPLY:0:150}…${REPLY: -100}"
+  deny "$HOOK" MITSUISHI-EDIT-002 "$TOOL" "$FILE" \
+    "メイン（プランナー）は Claude の設定・エージェント定義・プラグイン・このガード自身・.git の下を編集しません。利用者が手で直すか、実行役（executor）に指示書を渡して委任してください。" \
+    "止めたもの: ${TOOL} で ${REPLY}（${CFG}。git の内外・行数・文書かどうかに関係なく止める）。"
+fi
+
+# ── 文書は通す（切り詰めて読んだパスは例外に入れない） ──
+if [ "$TRUNC" != 1 ]; then
+  lower "${FP##*/}"
+  case "$REPLY" in
+    *.md|*.markdown|version|changelog|todos|version.txt|changelog.txt|todos.txt) exit 0 ;;
+  esac
+fi
+
+MAXL=2; MAXB=300
+NOTE=""
+case "$TOOL" in
+  Edit)
+    LINES=$(( J_OLD_L > J_NEW_L ? J_OLD_L : J_NEW_L ))
+    BYTES=$(( J_OLD_B > J_NEW_B ? J_OLD_B : J_NEW_B ))
+    if [ "$J_REPLACE_ALL" = "true" ]; then
+      NOTE="replace_all は例外に入らない"
+    elif [ "$J_OLD_L" -le "$MAXL" ] && [ "$J_NEW_L" -le "$MAXL" ] && [ "$BYTES" -le "$MAXB" ]; then
+      exit 0
+    elif [ "$BYTES" -gt "$MAXB" ]; then
+      NOTE="1 つの文字列が ${BYTES} バイト"
+    fi
+    ;;
+  MultiEdit)
+    LINES="$J_EDITS_L"; BYTES="$J_EDITS_B"
+    if [ "$J_EDITS_BAD" = 1 ] || [ "$J_EDITS_SEEN" = 0 ]; then
+      NOTE="replace_all か edits なしは例外に入らない"
+    elif [ "$LINES" -le "$MAXL" ] && [ "$BYTES" -le "$MAXB" ]; then
+      exit 0
+    elif [ "$BYTES" -gt "$MAXB" ]; then
+      NOTE="合計 ${BYTES} バイト"
+    fi
+    ;;
+  Write) LINES="$J_CONTENT_L" ;;
+  NotebookEdit) LINES="$J_SRC_L" ;;
+  *) LINES=0 ;;
 esac
 
-REASON="社内ルール：プランナー（メインのセッション）はコードを直接編集しません。この変更は実行役のサブエージェントに委任してください（Superpowers の subagent-driven-development を使うか、Agent ツールで実装を依頼する）。軽微な修正でも同様です。対象: ${FILE:-不明}"
-REASON=${REASON//\\/\\\\}; REASON=${REASON//\"/\\\"}
-printf '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"%s"}}\n' "$REASON"
-exit 0
+git_judge "$FILE" "$J_CWD"
+case $? in
+  0) ;;
+  1) exit 0 ;;
+  *) hook_log "$HOOK" MITSUISHI-FAIL-GIT "$TOOL" "$FILE（$GIT_JUDGE_ERR）"; exit 0 ;;
+esac
+
+one_line "$FILE"
+deny "$HOOK" MITSUISHI-EDIT-001 "$TOOL" "$FILE" \
+  "メイン（プランナー）は git のリポジトリの中のコードを直接編集しません。実行役（executor、画面は ui-executor）に指示書を渡して委任してください。" \
+  "止めたもの: ${TOOL} で ${REPLY}（変更 ${LINES:-0} 行、メインが直せる上限は ${MAXL} 行・${MAXB} バイト${NOTE:+。$NOTE}）。${MAXL} 行ずつに分けて回避しないこと。"

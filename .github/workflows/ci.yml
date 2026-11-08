@@ -1,0 +1,97 @@
+# CI（DECISIONS.md の 7）。ubuntu と windows の両方で、すべて bash で動かす
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  checks:
+    name: 必須の検査 (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: フックのテスト
+        run: bash tests/run-hooks-test.sh
+      - name: JSON の構文と注入 JSON
+        run: node scripts/check-json.mjs
+      - name: 版の検査
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          # push は直前の版（github.event.before）と、PR・新ブランチ（before が 0）は origin/main と比べる
+          if [ "$EVENT_NAME" = push ] && [ -n "$BEFORE" ] && ! printf '%s' "$BEFORE" | grep -qE '^0+$'; then
+            base="$BEFORE"
+          else
+            base=origin/main
+          fi
+          node scripts/check-version.mjs "$base"
+      - name: 禁止語（secret FORBIDDEN_WORDS。未設定なら飛ばす）
+        env:
+          FORBIDDEN_WORDS: ${{ secrets.FORBIDDEN_WORDS }}
+        run: node scripts/check-forbidden.mjs
+
+  secrets:
+    # gitleaks の公式 action は組織のリポジトリでライセンスキーが要るため、本体を版とチェックサムで固定して直接実行する
+    name: 秘密の検査（gitleaks）
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: gitleaks 8.30.1 を公式リリースから取得してチェックサムを確かめる
+        run: |
+          f=gitleaks_8.30.1_linux_x64.tar.gz
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$f" "https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/$f"
+          echo "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb  $RUNNER_TEMP/$f" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$f" -C "$RUNNER_TEMP" gitleaks
+          "$RUNNER_TEMP/gitleaks" version
+      - name: gitleaks で履歴全体を検査
+        run: |
+          if ! "$RUNNER_TEMP/gitleaks" git --redact --verbose --exit-code 1 .; then
+            echo "::error::gitleaks が秘密らしい文字列を見つけた。直し方: 出力の場所を確かめ、本物の秘密なら無効にして履歴から消す。誤検知なら .gitleaksignore に指紋を足す"
+            exit 1
+          fi
+
+  validate:
+    name: 任意の検査（claude plugin validate）
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: claude plugin validate .
+        run: |
+          if ! npm install -g @anthropic-ai/claude-code >/dev/null 2>&1; then
+            echo "::warning::Claude Code を入れられないため validate を飛ばした"
+            exit 0
+          fi
+          if ! claude plugin validate .; then
+            echo "::warning::claude plugin validate . が失敗（任意の段。必須に上げるかは TODOS.md）。直し方: 手元で claude plugin validate . を実行して直す"
+            exit 1
+          fi

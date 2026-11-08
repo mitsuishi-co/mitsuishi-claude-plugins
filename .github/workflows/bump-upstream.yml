@@ -1,0 +1,70 @@
+# 上流（gstack・superpowers）の固定を上げる PR を毎日つくり、CI が通ったら自動で取り込む（DECISIONS.md の 6）
+name: 上流の固定を上げる
+
+on:
+  schedule:
+    - cron: '17 21 * * *'   # 毎日 06:17（日本時間）
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read   # PR は BUMP_TOKEN の権限で作る
+
+concurrency:
+  group: bump-upstream
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        shell: bash
+    steps:
+      # 既定のトークン（GITHUB_TOKEN）で作った PR では CI が走らず、保護ブランチで取り込めない。黙って切り替えずに失敗させる
+      - name: secret BUMP_TOKEN の確認
+        env:
+          BUMP_TOKEN: ${{ secrets.BUMP_TOKEN }}
+        run: |
+          if [ -z "$BUMP_TOKEN" ]; then
+            echo "::error::secret BUMP_TOKEN が無いため、上流の固定を上げる PR を作れない（既定のトークンの PR では CI が走らず取り込めない）。直し方: このリポジトリの Contents と Pull requests に書き込める fine-grained トークンを作り、Actions の secret BUMP_TOKEN に置く（README の導入チェックリスト）"
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '22'
+      - name: 上流の HEAD を調べて書き換える
+        id: bump
+        run: node scripts/bump-upstream.mjs
+      - name: テスト
+        if: steps.bump.outputs.changed == 'true'
+        run: |
+          bash tests/run-hooks-test.sh
+          node scripts/check-json.mjs
+      - name: PR を作る（同じブランチがあれば更新する）
+        id: cpr
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@c0f553fe549906ede9cf27b5156039d195d2ece0 # v8.1.0
+        with:
+          token: ${{ secrets.BUMP_TOKEN }}
+          branch: bump-upstream
+          base: main
+          delete-branch: true
+          commit-message: ${{ steps.bump.outputs.title }}
+          title: ${{ steps.bump.outputs.title }}
+          body: ${{ steps.bump.outputs.body }}
+          add-paths: |
+            plugins/mitsuishi-dev/pins.json
+            plugins/mitsuishi-dev/.claude-plugin/plugin.json
+            .claude-plugin/marketplace.json
+            CHANGELOG.md
+      # CI（main の保護で必須にしたチェック）が通ったら自動で取り込む（DECISIONS.md の 6）。必須チェックが無いと即取り込まれる
+      - name: CI が通ったら自動で取り込む
+        if: steps.cpr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.BUMP_TOKEN }}
+          PR_NUMBER: ${{ steps.cpr.outputs.pull-request-number }}
+        run: gh pr merge "$PR_NUMBER" --auto --squash --repo "$GITHUB_REPOSITORY"

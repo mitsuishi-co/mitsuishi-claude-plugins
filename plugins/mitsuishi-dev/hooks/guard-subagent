@@ -1,0 +1,159 @@
+#!/usr/bin/env bash
+# PreToolUse（Agent / Task）
+#   MITSUISHI-AGENT-001: サブエージェント内（入力の最上位に agent_id がある）からの起動は止める（再委託禁止）
+#   MITSUISHI-AGENT-002: 最上位モデル（MODELS.md の TOP_ALIASES = 別名の完全一致、TOP_PREFIXES = 正式名の前方一致）を
+#                        advisor 以外に指定したら止める。advisor として通すのは advisor と mitsuishi-dev:advisor だけ
+#   model を省いたときは、subagent_type の定義（cwd から git のルートまでの .claude/agents/・~/.claude/agents/（サブフォルダも）・
+#   このプラグインと ~/.claude/plugins/ の下の各プラグインの agents/）から frontmatter の name: が一致するもの
+#   （名前空間つきならそのプラグインのもの）を探し、その model を同じ表で照合する
+#   定義にも model が無い起動は止めない（管理設定の CLAUDE_CODE_SUBAGENT_MODEL で決まる）
+# 停止: MITSUISHI_HOOKS_OFF（1・all・subagent。0・false・no・off・none は止めない。未知の値は全部止める）
+
+if [ -n "${MITSUISHI_HOOKS_OFF:-}" ]; then
+  _off=$(printf '%s' "$MITSUISHI_HOOKS_OFF" | tr 'A-Z' 'a-z' | tr -d ' \t\r\n')
+  set -f; IFS=,
+  for _t in $_off; do
+    case "$_t" in ''|0|false|no|off|none|planner-edit|session-start) ;; *) exit 0 ;; esac
+  done
+  unset IFS; set +f
+fi
+
+HOOK=subagent
+_self="${0//\\//}"
+case "$_self" in */*) _dir="${_self%/*}" ;; *) _dir=. ;; esac
+. "$_dir/lib/common.sh" 2>/dev/null || {
+  cat >/dev/null 2>&1
+  mkdir -p "$HOME/.claude/mitsuishi-dev" 2>/dev/null
+  printf '%s\t%s\t%s\t-\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$HOOK" MITSUISHI-FAIL-LIB "lib/common.sh を読めない" >>"$HOME/.claude/mitsuishi-dev/hooks.log" 2>/dev/null
+  exit 0
+}
+
+read_input
+TOOL="$J_TOOL"
+if [ -z "$TOOL" ] || [ "$J_ERR" = 1 ]; then
+  hook_log "$HOOK" MITSUISHI-FAIL-JSON - "入力の JSON を読めない"
+  exit 0
+fi
+
+one_line "$J_TYPE"; TYPE_RAW="$REPLY"
+one_line "$J_MODEL"; MODEL_RAW="$REPLY"
+
+if [ -n "$J_AGENT_ID" ]; then
+  one_line "$J_AGENT_TYPE"
+  deny "$HOOK" MITSUISHI-AGENT-001 "$TOOL" "${TYPE_RAW:-不明}" \
+    "実行役（サブエージェント）はさらにサブエージェントを起動しません（再委託禁止）。自分の手で行い、分ける必要があれば完了報告に「要判断」として書いてメインに返してください。" \
+    "止めたもの: 呼んだ側 ${REPLY:-不明なサブエージェント} → subagent_type ${TYPE_RAW:-指定なし}（model ${MODEL_RAW:-指定なし}）。"
+fi
+
+lower "${TYPE_RAW// /}"; TYPE="$REPLY"
+case "$TYPE" in
+  advisor|mitsuishi-dev:advisor) exit 0 ;;
+esac
+
+# plugin_name <プラグインのフォルダ> : .claude-plugin/plugin.json の name を REPLY に（読めなければフォルダ名。
+#   ~/.claude/plugins/cache/<マーケットプレイス>/<名前>/<版> の形なら版の 1 つ上のフォルダ名）
+plugin_name() {
+  local root="$1" txt="" b
+  REPLY=""
+  [ -r "$root/.claude-plugin/plugin.json" ] && IFS= read -r -d '' txt <"$root/.claude-plugin/plugin.json"
+  if [[ $txt =~ \"name\"[[:space:]]*:[[:space:]]*\"([^\"]+)\" ]]; then REPLY="${BASH_REMATCH[1]}"; return; fi
+  b="${root##*/}"
+  case "$b" in [0-9]*) b="${root%/*}"; b="${b##*/}" ;; esac
+  REPLY="$b"
+}
+
+lower "${MODEL_RAW// /}"; MODEL="$REPLY"
+FROM=""
+if [ -z "$MODEL" ]; then
+  # 定義を frontmatter の name: で探す。名前空間なし = プロジェクトの .claude/agents/ → ~/.claude/agents/ →
+  # プラグインの agents/（このプラグインと ~/.claude/plugins/ の下）の順で最初に見つかったもの。
+  # 名前空間つき（<プラグイン>:<名前>）= そのプラグインの agents/ の中だけ
+  NS=""; NAME="$TYPE_RAW"
+  case "$TYPE_RAW" in *:*) NS="${TYPE_RAW%%:*}"; NAME="${TYPE_RAW#*:}" ;; esac
+  case "$NAME" in
+    ''|.*|*[!A-Za-z0-9_.-]*) exit 0 ;;
+  esac
+  _cwd="${J_CWD//\\//}"
+  # frontmatter（最初の --- と次の --- の間）の name・model を読む awk。YAML のコメント（空白の後の #）と引用符は取り除く。
+  # 出力は「ファイル<TAB>model」で、name が一致したものだけ
+  AWKP='
+      function val(s) {
+        sub(/^[^:]*:[ \t]*/, "", s); sub(/\r$/, "", s)
+        sub(/[ \t]+#.*$/, "", s); sub(/^#.*$/, "", s)
+        sub(/[ \t]+$/, "", s)
+        if (s ~ /^".*"$/ || s ~ /^\047.*\047$/) s = substr(s, 2, length(s) - 2)
+        return s
+      }
+      function flush() { if (nm == want) printf "%s\t%s\n", fn, md }
+      FNR == 1 { fn = FILENAME; st = 0; nm = ""; md = "" }
+      st == 2 { next }
+      { line = $0; sub(/\r$/, "", line) }
+      FNR == 1 && index(line, "\357\273\277") == 1 { line = substr(line, length("\357\273\277") + 1) }
+      FNR == 1 { if (line ~ /^---[ \t]*$/) st = 1; else st = 2; next }
+      line ~ /^---[ \t]*$/ { flush(); st = 2; next }
+      line ~ /^name[ \t]*:/ { nm = val(line) }
+      line ~ /^model[ \t]*:/ { md = val(line) }
+'
+  # search <フォルダ>... : find を 1 回だけ起動して探し、最初に当たった定義を FOUND・MODEL に
+  FOUND=""
+  search() {
+    local d hits f m
+    local -a dirs=()
+    for d in "$@"; do [ -d "$d" ] && dirs+=("$d"); done
+    [ "${#dirs[@]}" -gt 0 ] || return 1
+    hits=$(find "${dirs[@]}" -maxdepth 8 \( -name node_modules -o -name .git \) -prune -o -type f -name '*.md' -path '*/agents/*' \
+      -exec awk -v want="$NAME" "$AWKP" {} + 2>/dev/null)
+    while IFS=$'\t' read -r f m; do
+      [ -n "$f" ] || continue
+      if [ -n "$NS" ]; then
+        # 名前空間つきは、定義の入ったプラグインの名前（plugin.json の name）が一致するものだけ
+        plugin_name "${f%/[Aa][Gg][Ee][Nn][Tt][Ss]/*}"
+        lower "$REPLY"; d="$REPLY"; lower "$NS"
+        [ "$d" = "$REPLY" ] || continue
+      fi
+      FOUND="$f"; lower "${m// /}"; MODEL="$REPLY"
+      return 0
+    done <<<"$hits"
+    return 1
+  }
+  # 速さのため 2 段で探す: まず近くの小さいフォルダ（プロジェクト・~/.claude/agents・このプラグイン）、
+  # 無ければ ~/.claude/plugins の下（大きい）
+  # プロジェクトの .claude/agents は cwd から git のルート（.git のあるフォルダ）まで上って近い順に探す。git の外なら cwd だけ
+  _pd=(); _d="${_cwd:-$PWD}"; _i=0; _top=0
+  while [ "$_i" -lt 64 ]; do
+    [ -d "$_d/.claude/agents" ] && _pd+=("$_d/.claude/agents")
+    [ -e "$_d/.git" ] && { _top=1; break; }
+    parent_dir "$_d"; [ "$PD" = "$_d" ] && break
+    _d="$PD"; _i=$((_i + 1))
+  done
+  [ "$_top" = 1 ] || _pd=("${_cwd:-$PWD}/.claude/agents")
+  if [ -z "$NS" ]; then
+    search "${_pd[@]}" "$HOME/.claude/agents" "$PLUGIN_ROOT/agents" || search "$HOME/.claude/plugins"
+  else
+    search "$PLUGIN_ROOT/agents" || search "$HOME/.claude/plugins"
+  fi
+  [ -n "$FOUND" ] || exit 0
+  one_line "$FOUND"; FROM="$REPLY"
+  [ -n "$MODEL" ] || exit 0
+fi
+
+read_models
+HIT=""
+for a in $TOP_A; do
+  [ "$MODEL" = "$a" ] && { HIT="別名 $a"; break; }
+done
+if [ -z "$HIT" ]; then
+  for p in $TOP_P; do
+    case "$MODEL" in "$p"*) HIT="前方一致 $p"; break ;; esac
+  done
+fi
+[ -n "$HIT" ] || exit 0
+
+if [ -n "$FROM" ]; then
+  SHOWN="model 省略。定義 ${FROM} の model ${MODEL}"
+else
+  SHOWN="model ${MODEL_RAW}"
+fi
+deny "$HOOK" MITSUISHI-AGENT-002 "$TOOL" "${TYPE_RAW:-指定なし} model=${MODEL_RAW:-${MODEL}（定義）}" \
+  "最上位モデルは相談役（advisor）専用です。実行役には opus・sonnet・haiku を指定してください（調査は haiku、仕様が固まった実装は sonnet、設計判断を含む実装は opus）。" \
+  "止めたもの: 呼んだ側 メイン → subagent_type ${TYPE_RAW:-指定なし} に ${SHOWN}（MODELS.md の ${HIT} に当たる）。"
