@@ -81,7 +81,7 @@ description: 社内標準の開発ワークフロー。メイン（プランナ�
 ## 更新
 
 - プラグインは管理設定の `autoUpdate: true` で更新され、次の起動で新版になる（自社プラグインは直したら `version` を上げ、CHANGELOG.md に 1 行足す。上げないと届かない）
-- 上流は版を固定する。Superpowers は marketplace.json の `sha`、gstack は `pins.json` の `sha`。CI が毎日「上流の固定を上げる」PR を作り、CI が通れば自動で取り込まれ、全員へ届く
+- 上流は版を固定する。Superpowers は上流の写しを `plugins/superpowers/` に同梱（固定の sha は `upstream-pins.json`）、gstack は `pins.json` の `sha`。CI が毎日「上流の固定を上げる」PR を作り、CI が通れば自動で取り込まれ、全員へ届く
 - gstack の自動更新は使わない（`auto_upgrade: false`）。`/gstack-upgrade` も実行しない（固定が外れる）
 
 ## gstack の状態

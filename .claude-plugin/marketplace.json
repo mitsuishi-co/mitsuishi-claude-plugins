@@ -8,17 +8,13 @@
     {
       "name": "mitsuishi-dev",
       "description": "社内標準の開発ワークフロー（プランナーと実行役の分担・モデルの使い分け・gstack の工程・gstack の導入と設定）",
-      "version": "2.4.0",
+      "version": "2.4.1",
       "source": "./plugins/mitsuishi-dev"
     },
     {
       "name": "superpowers",
-      "description": "obra/superpowers（sha で固定し、CI が毎日上げる PR で更新）。社内で使うのは test-driven-development・systematic-debugging・verification-before-completion・receiving-code-review の 4 つだけ",
-      "source": {
-        "source": "url",
-        "url": "https://github.com/obra/superpowers.git",
-        "sha": "22f0b463e7a5e579904dd6211a520321035526f7"
-      }
+      "description": "obra/superpowers（上流の写しを同梱、CI が毎日上げる PR で更新）。社内で使うのは test-driven-development・systematic-debugging・verification-before-completion・receiving-code-review の 4 つだけ",
+      "source": "./plugins/superpowers"
     }
   ]
 }

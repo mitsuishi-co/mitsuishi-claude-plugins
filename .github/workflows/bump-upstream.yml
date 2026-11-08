@@ -58,6 +58,8 @@ jobs:
           body: ${{ steps.bump.outputs.body }}
           add-paths: |
             plugins/mitsuishi-dev/pins.json
+            upstream-pins.json
+            plugins/superpowers
             plugins/mitsuishi-dev/.claude-plugin/plugin.json
             .claude-plugin/marketplace.json
             CHANGELOG.md

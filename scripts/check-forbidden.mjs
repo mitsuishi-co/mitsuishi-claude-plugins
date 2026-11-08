@@ -14,8 +14,11 @@ if (!words.length) {
   process.exit(0);
 }
 
+// plugins/superpowers/ は上流（obra/superpowers）の写しで、自社の語は書かない（中身を書き換えない）。
+// 語の一覧は非公開で上流の語と重なるかを確かめられず、毎日の「上流の固定を上げる」PR が上流の文言で止まらないよう対象外にする
+const UPSTREAM_COPIES = ['plugins/superpowers/'];
 const files = execFileSync('git', ['-C', ROOT, 'ls-files', '-co', '--exclude-standard'], { encoding: 'utf8' })
-  .split('\n').filter(Boolean);
+  .split('\n').filter(Boolean).filter((f) => !UPSTREAM_COPIES.some((d) => f.startsWith(d)));
 let hits = 0;
 for (const f of files) {
   let text;
