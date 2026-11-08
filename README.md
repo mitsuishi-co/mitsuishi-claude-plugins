@@ -41,7 +41,7 @@
   - エージェント `executor`（実行役）・`ui-executor`（画面専用の実行役、起動時に frontend-design を読み込む）・`advisor`（相談役）・`outside-voice`（外部レビュー役）
   - フックで止めるのは、メインのコード編集・メインによる Claude の設定とエージェント定義の編集・実行役からの再委託・advisor 以外への最上位モデルの指定だけ（下の「フックに止められたとき」）。フックは促しであり仕切りではない（Bash・PowerShell 経由の書き換え、2 行 Edit の連打、model を定義にも持たない起動は止めない）
   - セッション開始時にワークフロー規則と `MODELS.md` と gstack の状態を注入し、git のリポジトリの中で始めたときだけ gstack の導入・毎日の更新を裏で行う（セッションは待たない）
-- **superpowers**（`obra/superpowers` を url（HTTPS）と `sha` で固定）
+- **superpowers**（`obra/superpowers` の固定の sha の写しを `plugins/superpowers/` に同梱し、相対パスで配る。中身は書き換えない）
   - 使うのは `test-driven-development`・`systematic-debugging`・`verification-before-completion`・`receiving-code-review` の 4 つだけ
   - superpowers だけ止める: 管理設定の `enabledPlugins` で `"superpowers@mitsuishi": false` にする
 - **frontend-design**・**claude-security**（Anthropic 公式マーケットプレイス `claude-plugins-official`。公式の更新に追従）
@@ -49,7 +49,8 @@
 ## 構成
 
 ```
-.claude-plugin/marketplace.json        マーケットプレイス定義（名前: mitsuishi。superpowers の sha の固定もここ）
+.claude-plugin/marketplace.json        マーケットプレイス定義（名前: mitsuishi。2 つとも相対パスで配る）
+upstream-pins.json                      superpowers の固定する sha（上流の写しの出どころ。各 PC は読まない）
 plugins/mitsuishi-dev/
   .claude-plugin/plugin.json
   MODELS.md                             モデル別名の対応表と最上位の判定行（新モデル時はここだけ直す）
@@ -68,6 +69,7 @@ scripts/                                CI の検査（版・JSON・禁止語）
 .github/workflows/ci.yml                CI（ubuntu と windows）
 .github/workflows/bump-upstream.yml     上流の固定を上げる PR を毎日つくり、CI が通ったら自動で取り込む
 tests/run-hooks-test.sh                 フックと CI のスクリプトの動作確認（ネットワークに出ない）
+plugins/superpowers/                    obra/superpowers の写し（LICENSE は MIT。手で書き換えない。bump-upstream が丸ごと置き換える）
 ```
 
 ## フックに止められたとき
@@ -116,9 +118,10 @@ git commit -am "mitsuishi-dev を <戻したい版> の中身に戻す" && git p
 ## 更新の仕組み
 
 - **自社プラグイン**: 管理設定の 2 つのマーケットプレイスは `autoUpdate: true`。Claude Code はセッション中に更新を確かめ、次の起動で新版になる。`plugins/mitsuishi-dev/` を変えたら `plugin.json` と `marketplace.json` の `version` を上げ、`CHANGELOG.md` の先頭に 1 行足す（**上げないと届かない**。CI が検査する）
-- **上流は版を固定する**: superpowers は `marketplace.json` の `sha`、gstack は `plugins/mitsuishi-dev/pins.json` の `sha`。CI（`bump-upstream.yml`）が毎日両方の最新を調べ、変わっていれば「上流の固定を上げる」PR を作り、CI が通れば自動で取り込まれ（auto-merge、squash）、全員へ届く（本文に上流ごとの compare のリンク）。CI は自社のフックを確かめるだけで、上流の中身は確かめない
-  - **上流で不具合が出たら**: その取り込みコミット（「上流の固定を上げる」）を revert し、mitsuishi-dev の版は今より上げて CHANGELOG に 1 行足して PR で出す（下の「版を戻す」と同じ。版を下げると届かない）。固定が前の sha に戻り、全員が前の版に戻る。ただし superpowers は版が上流の plugin.json で決まるため、revert で版が下がると届かない。superpowers を止めるときは管理設定の `enabledPlugins` で `false` にする
-  - **superpowers は上流の `version` が変わったときだけ上げる**: Claude Code は plugin.json の `version` で更新を判断し、superpowers は自分の plugin.json に `version` を持つ（マーケットプレイス側の `version` より優先される）。sha だけ上げても各 PC には届かないため、上流の `version` が同じか確かめられないときは superpowers の sha を変えない（gstack だけが変わっていれば gstack だけ上げる）
+- **上流は版を固定する**: superpowers は `upstream-pins.json` の `sha` の中身を `plugins/superpowers/` に同梱、gstack は `plugins/mitsuishi-dev/pins.json` の `sha`。CI（`bump-upstream.yml`）が毎日両方の最新を調べ、変わっていれば「上流の固定を上げる」PR を作り、CI が通れば自動で取り込まれ（auto-merge、squash）、全員へ届く（本文に上流ごとの compare のリンク）。CI は自社のフックを確かめるだけで、上流の中身は確かめない
+  - **上流で不具合が出たら**: その取り込みコミット（「上流の固定を上げる」）を revert し、mitsuishi-dev の版は今より上げて CHANGELOG に 1 行足して PR で出す（下の「版を戻す」と同じ。版を下げると届かない）。固定が前の sha に戻り、全員が前の版に戻る。superpowers は取り込みを revert しても版が下がるため届かない。戻すときは `plugins/superpowers/` の中身を前の版にし（`git checkout <前の取り込みのコミット> -- plugins/superpowers`）、`plugins/superpowers/.claude-plugin/plugin.json` の `version` を今より上げて PR で出す（上流の `version` がその版を超えた日の自動の PR で上流の写しに戻る）。止めるだけなら管理設定の `enabledPlugins` で `"superpowers@mitsuishi": false` にする
+  - **superpowers は上流の `version` が今の写しより大きいときだけ上げる**: Claude Code は plugin.json の `version` で更新を判断し、superpowers は自分の plugin.json に `version` を持つ（マーケットプレイス側の `version` より優先される）。中身だけ上げても各 PC には届かないため、上流の `version` が今の写しと同じ・小さい（写しを戻して版を上げた後など）・確かめられないときは superpowers を変えない（semver で比べる）（gstack だけが変わっていれば gstack だけ上げる）。上げるときは新しい sha の中身で `plugins/superpowers/` を丸ごと置き換え（消えたファイルも消す）、`upstream-pins.json` の sha を上げる
+  - 禁止語の検査は `plugins/superpowers/` を見ない（上流の写しで自社の語を書かない場所。非公開の語の一覧と上流の文言の重なりで毎日の PR を止めないため）。JSON の構文検査と gitleaks は同梱した中身も見る
   - PR は secret `BUMP_TOKEN` で作る。無ければジョブが失敗して知らせる。`bump-upstream` ブランチには手で積まない
 - **gstack**: セッションを git のリポジトリの中で始めたときだけ、裏で（`hooks/lib/gstack-bg.sh`）動く。gstack の今の HEAD が固定の sha と違えば（固定が上がった・未導入・前回が未完了）すぐ、固定の sha を checkout して `./setup -q --no-plan-tune-hooks` を実行する。同じなら、前回の成功から 24 時間ごとに設定を `auto_upgrade: false`・`codex_reviews: disabled`・`telemetry: off` にそろえるだけ。失敗から 1 時間未満は何もしない。打ち切りは初回の導入 900 秒・更新 300 秒。`gstack-upgrade` は使わない。ログは `~/.claude/mitsuishi-dev/gstack.log`、状態は `~/.claude/mitsuishi-dev/state`
   - 自分で入れていた gstack（HEAD が固定と違う）は固定の版で上書きし、その日の状態行で一度だけ知らせる

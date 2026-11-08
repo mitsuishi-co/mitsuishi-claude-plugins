@@ -776,7 +776,11 @@ if command -v node >/dev/null 2>&1; then
   echo "この行に ZzSecretWordZz がある" >"$CR/note.txt"
   OUT=$(cd "$CR" && FORBIDDEN_WORDS=$'foo-not-here\nzzsecretwordzz' node scripts/check-forbidden.mjs 2>&1); RC=$?
   t "禁止語: 当たれば失敗し、場所だけ出して語は出さない" '[ $RC != 0 ] && printf "%s" "$OUT" | grep -q "file=note.txt,line=1" && ! printf "%s" "$OUT" | grep -qi zzsecretwordzz' "$OUT"
-  rm -f "$CR/note.txt"
+  UW="zzup""streamzz"   # このファイル自体に当たらないよう分けて書く
+  rm -f "$CR/note.txt"; echo "$UW" >"$CR/plugins/superpowers/note.txt"
+  OUT=$(cd "$CR" && FORBIDDEN_WORDS="$UW" node scripts/check-forbidden.mjs 2>&1); RC=$?
+  t "禁止語: 上流の写し（plugins/superpowers/）は見ない" '[ $RC = 0 ]' "$OUT"
+  rm -f "$CR/note.txt" "$CR/plugins/superpowers/note.txt"
 
   OUT=$(cd "$CR" && HOME="$TMP/home" node scripts/check-json.mjs 2>&1); RC=$?
   t "JSON の検査と注入 JSON の parse が成功" '[ $RC = 0 ]' "$OUT"
@@ -785,49 +789,71 @@ if command -v node >/dev/null 2>&1; then
   t "JSON の構文の誤りで失敗" '[ $RC != 0 ] && printf "%s" "$OUT" | grep -q "broken.json"' "$OUT"
   rm -f "$CR/broken.json"
 
-  # 上流の固定を上げる（ls-remote の代わりに BUMP_HEADS、superpowers の version の取得の代わりに BUMP_VERSIONS。ネットワークに出ない）
+  # 上流の固定を上げる（ls-remote の代わりに BUMP_HEADS、superpowers の中身の取得の代わりに BUMP_SUPERPOWERS_SRC。ネットワークに出ない）
   GA=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa; SB=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-  OLDS=$(sed -n 's/.*"sha": *"\([0-9a-f]\{40\}\)".*/\1/p' "$CR/.claude-plugin/marketplace.json")
+  UP="$CR/upstream-pins.json"; SPD="$CR/plugins/superpowers"
+  OLDS=$(sed -n 's/.*"sha": *"\([0-9a-f]\{40\}\)".*/\1/p' "$UP")
+  SPV=$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$SPD/.claude-plugin/plugin.json")
   MK="$CR/.claude-plugin/marketplace.json"; PJ="$CR/plugins/mitsuishi-dev/.claude-plugin/plugin.json"; PN="$CR/plugins/mitsuishi-dev/pins.json"
+  # 偽の上流の中身 <フォルダ> <version>: 今の写しに無いファイルと .git を持ち、今の写しのファイルは持たない
+  mksp() { rm -rf "$1"; mkdir -p "$1/.claude-plugin" "$1/.git" "$1/skills/new-skill"; printf '{"name":"superpowers","version":"%s"}\n' "$2" >"$1/.claude-plugin/plugin.json"; echo MIT >"$1/LICENSE"; echo new >"$1/skills/new-skill/SKILL.md"; echo x >"$1/.git/HEAD"; }
+  NEWSP="$TMP/sp-new"; mksp "$NEWSP" 99.0.0
+  SAMESP="$TMP/sp-same"; mksp "$SAMESP" "$SPV"
+  OLDSP="$TMP/sp-old"; mksp "$OLDSP" 0.0.1
+  NOLIC="$TMP/sp-nolic"; mksp "$NOLIC" 99.0.0; rm -f "$NOLIC/LICENSE"
+  spold() { [ -f "$SPD/LICENSE" ] && [ -f "$SPD/skills/test-driven-development/SKILL.md" ] && [ ! -e "$SPD/skills/new-skill" ] && grep -q "\"sha\": \"$OLDS\"" "$UP"; }
   breset() { (cd "$CR" && "$REAL_GIT" checkout -q -- . && "$REAL_GIT" clean -qfd); : >"$TMP/gh-out"; }
-  # bump <gstack の sha> <superpowers の sha> [環境変数=値 ...]
-  bump() { local g="$1" s="$2"; shift 2; OUT=$(cd "$CR" && env BUMP_HEADS="{\"gstack\":\"$g\",\"superpowers\":\"$s\"}" GITHUB_OUTPUT="$TMP/gh-out" "$@" node scripts/bump-upstream.mjs 2>&1); RC=$?; }
+  # bump <gstack の sha> <superpowers の sha> [環境変数=値 ...]（中身の既定は NEWSP。後の環境変数が勝つ）
+  bump() { local g="$1" s="$2"; shift 2; OUT=$(cd "$CR" && env BUMP_HEADS="{\"gstack\":\"$g\",\"superpowers\":\"$s\"}" BUMP_SUPERPOWERS_SRC="$NEWSP" GITHUB_OUTPUT="$TMP/gh-out" "$@" node scripts/bump-upstream.mjs 2>&1); RC=$?; }
   ghout() { cat "$TMP/gh-out" 2>/dev/null; }
-  VCH='BUMP_VERSIONS={"old":"5.0.0","new":"5.1.0"}'; VSAME='BUMP_VERSIONS={"old":"5.0.0","new":"5.0.0"}'
+  t "上流の写し: marketplace.json の superpowers は相対パス・LICENSE がある・固定の sha は upstream-pins.json" \
+    'grep -q "\"source\": \"./plugins/superpowers\"" "$MK" && [ -f "$ROOT/plugins/superpowers/LICENSE" ] && [ -n "$OLDS" ] && [ -n "$SPV" ]'
   breset
-  bump "$GA" "$SB" "$VCH"
-  t "上流の固定を上げる: pins.json・marketplace.json の sha・版の patch・CHANGELOG を書き換える" \
-    '[ $RC = 0 ] && grep -q "$GA" "$PN" && grep -q "\"sha\": \"$SB\"" "$MK" && grep -q "\"version\": \"$NV\"" "$PJ" && head -n 6 "$CR/CHANGELOG.md" | grep -q "^- $NV .*上流の固定を上げる" && ghout | grep -q "^changed<<"' "$OUT"
+  bump "$GA" "$SB"
+  t "上流の固定を上げる: pins.json・upstream-pins.json の sha・版の patch・CHANGELOG を書き換える" \
+    '[ $RC = 0 ] && grep -q "$GA" "$PN" && grep -q "\"sha\": \"$SB\"" "$UP" && grep -q "\"version\": \"$NV\"" "$PJ" && head -n 6 "$CR/CHANGELOG.md" | grep -q "^- $NV .*上流の固定を上げる" && ghout | grep -q "^changed<<"' "$OUT"
+  t "superpowers の上流の版が大きければ plugins/superpowers/ を丸ごと置き換える（消えたファイルも消し、.git は写さない）" \
+    '[ -f "$SPD/skills/new-skill/SKILL.md" ] && [ ! -e "$SPD/skills/test-driven-development" ] && [ ! -e "$SPD/.git" ] && grep -q "99.0.0" "$SPD/.claude-plugin/plugin.json" && [ -f "$SPD/LICENSE" ]' "$(ls -a "$SPD")"
   t "PR の本文に上流ごとの compare のリンク" \
-    'ghout | grep -q "https://github.com/garrytan/gstack/compare/$PIN\.\.\.$GA" && ghout | grep -q "https://github.com/obra/superpowers/compare/$OLDS\.\.\.$SB"' "$(ghout)"
+    'ghout | grep -q "https://github.com/garrytan/gstack/compare/$PIN\.\.\.$GA" && ghout | grep -q "https://github.com/obra/superpowers/compare/$OLDS\.\.\.$SB" && ghout | grep -q "superpowers の version: $SPV → 99.0.0"' "$(ghout)"
   OUT=$(cd "$CR" && node scripts/check-version.mjs main 2>&1); RC=$?
   t "上流の固定を上げた後も版の検査が成功" '[ $RC = 0 ]' "$OUT"
-  bump "$GA" "$SB" "$VCH"
+  bump "$GA" "$SB"
   t "上流の固定を上げる: 変わっていなければ何もしない" '[ $RC = 0 ] && printf "%s" "$OUT" | grep -q "変わっていない" && grep -q "\"version\": \"$NV\"" "$PJ" && ghout | grep -A1 "^changed<<" | grep -qx false' "$OUT"
   breset
-  bump "$PIN" "$SB" "$VSAME"
-  t "superpowers だけ変わり version が同じ: sha を書き換えず changed=false" \
-    '[ $RC = 0 ] && grep -q "\"sha\": \"$OLDS\"" "$MK" && grep -q "\"version\": \"$V\"" "$PJ" && ghout | grep -A1 "^changed<<" | grep -qx false && printf "%s" "$OUT" | grep -q "version が同じ"' "$OUT"
+  bump "$PIN" "$SB" BUMP_SUPERPOWERS_SRC="$SAMESP"
+  t "superpowers だけ変わり version が同じ: 中身も sha も変えず changed=false" \
+    '[ $RC = 0 ] && spold && grep -q "\"version\": \"$V\"" "$PJ" && ghout | grep -A1 "^changed<<" | grep -qx false && printf "%s" "$OUT" | grep -q "version が同じ"' "$OUT"
+  breset
+  bump "$PIN" "$SB" BUMP_SUPERPOWERS_SRC="$OLDSP"
+  t "superpowers の上流の版が今の写しより小さい: 中身も sha も変えず changed=false" \
+    '[ $RC = 0 ] && spold && ghout | grep -A1 "^changed<<" | grep -qx false && printf "%s" "$OUT" | grep -q "より小さい"' "$OUT"
   breset
   bump "$PIN" "$SB" 'BUMP_VERSIONS={"old":null,"new":"5.1.0"}'
-  t "superpowers だけ変わり version を取得できない: sha を書き換えず changed=false" \
-    '[ $RC = 0 ] && grep -q "\"sha\": \"$OLDS\"" "$MK" && ghout | grep -A1 "^changed<<" | grep -qx false && printf "%s" "$OUT" | grep -q "確かめられない"' "$OUT"
+  t "superpowers だけ変わり version を確かめられない: 中身も sha も変えず changed=false" \
+    '[ $RC = 0 ] && spold && ghout | grep -A1 "^changed<<" | grep -qx false && printf "%s" "$OUT" | grep -q "確かめられない"' "$OUT"
   breset
-  bump "$PIN" "$SB" BUMP_OFFLINE=1
-  t "superpowers だけ変わり BUMP_OFFLINE=1（version を確かめない）: sha を書き換えない" \
-    '[ $RC = 0 ] && grep -q "\"sha\": \"$OLDS\"" "$MK" && ghout | grep -A1 "^changed<<" | grep -qx false' "$OUT"
+  bump "$PIN" "$SB" BUMP_SUPERPOWERS_SRC= BUMP_OFFLINE=1
+  t "superpowers だけ変わり BUMP_OFFLINE=1（中身を取得しない）: 中身も sha も変えない" \
+    '[ $RC = 0 ] && spold && ghout | grep -A1 "^changed<<" | grep -qx false' "$OUT"
   breset
-  bump "$PIN" "$SB" "$VCH"
-  t "superpowers だけ変わり version も変わった: superpowers の sha だけ書き換える" \
-    '[ $RC = 0 ] && grep -q "\"sha\": \"$SB\"" "$MK" && grep -q "$PIN" "$PN" && grep -q "\"version\": \"$NV\"" "$PJ" && ghout | grep -q "superpowers の version: 5.0.0 → 5.1.0" && ! ghout | grep -q "garrytan/gstack/compare"' "$OUT"
+  bump "$PIN" "$SB"
+  t "superpowers だけ変わり version が上がった: superpowers だけ置き換える" \
+    '[ $RC = 0 ] && grep -q "\"sha\": \"$SB\"" "$UP" && [ -f "$SPD/skills/new-skill/SKILL.md" ] && grep -q "$PIN" "$PN" && grep -q "\"version\": \"$NV\"" "$PJ" && ! ghout | grep -q "garrytan/gstack/compare"' "$OUT"
+  breset
+  bump "$PIN" "$SB" 'BUMP_VERSIONS={"old":"5.0.0","new":"5.1.0"}'
+  t "BUMP_VERSIONS で version の読み取りを差し替えられる" '[ $RC = 0 ] && ghout | grep -q "superpowers の version: 5.0.0 → 5.1.0"' "$(ghout)"
+  breset
+  bump "$PIN" "$SB" BUMP_SUPERPOWERS_SRC="$NOLIC"
+  t "上流の中身に LICENSE が無ければ止める（書き換えない）" '[ $RC != 0 ] && printf "%s" "$OUT" | grep -q "LICENSE が無い" && spold && grep -q "\"version\": \"$V\"" "$PJ"' "$OUT"
   breset
   bump "$GA" "$OLDS"
-  t "gstack だけ変わった: pins.json だけ書き換え、superpowers の version は見ない" \
-    '[ $RC = 0 ] && grep -q "$GA" "$PN" && grep -q "\"sha\": \"$OLDS\"" "$MK" && ghout | grep -q "garrytan/gstack/compare" && ! ghout | grep -q "obra/superpowers/compare"' "$OUT"
+  t "gstack だけ変わった: pins.json だけ書き換え、superpowers は見ない" \
+    '[ $RC = 0 ] && grep -q "$GA" "$PN" && spold && ghout | grep -q "garrytan/gstack/compare" && ! ghout | grep -q "obra/superpowers/compare"' "$OUT"
   breset
-  bump "$GA" "$SB" "$VSAME"
+  bump "$GA" "$SB" BUMP_SUPERPOWERS_SRC="$SAMESP"
   t "gstack が変わり superpowers は version が同じ: gstack だけ上げ、本文に superpowers を見送った理由" \
-    '[ $RC = 0 ] && grep -q "$GA" "$PN" && grep -q "\"sha\": \"$OLDS\"" "$MK" && ghout | grep -q "superpowers.*見送った"' "$(ghout)"
+    '[ $RC = 0 ] && grep -q "$GA" "$PN" && spold && ghout | grep -q "superpowers.*見送った"' "$(ghout)"
   breset
   sed -i.bak "s/\"version\": \"$V\"/\"version\": \"$V-rc.1\"/" "$PJ" "$MK"; rm -f "$PJ.bak" "$MK.bak"
   bump "$GA" "$OLDS"

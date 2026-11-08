@@ -82,12 +82,13 @@ git の判定: 対象ファイルのパスの `\` を `/` に直し、存在す�
 - 自社プラグイン: 管理設定の `extraKnownMarketplaces` で 2 つのマーケットプレイス（mitsuishi・claude-plugins-official）を `autoUpdate: true`。プラグインは 4 つ（mitsuishi-dev・superpowers・frontend-design・claude-security）。Claude Code はセッションを始めるたびに更新を確かめ、次の起動で新版になる
 - 自社プラグインの版: `plugin.json` と marketplace.json の `version` は残す。`plugins/mitsuishi-dev/` を変えたら両方を上げ、CHANGELOG.md に 1 行足す（上げないと届かない。CI で検査）
 - **上流は版を固定する**（利用者の判断、2026-11-07 最終関門）:
-  - superpowers: marketplace.json で `obra/superpowers` を url（HTTPS）と `sha` で固定する（`{"source":"url","url":"https://github.com/obra/superpowers.git","sha":…}`）。github 形式は SSH で clone され、SSH の鍵が無い PC で入らないため使わない
+  - superpowers: `obra/superpowers` の固定の sha の中身（`.git` を除く）を `plugins/superpowers/` にそのまま同梱し、marketplace.json では mitsuishi-dev と同じ相対パス（`"source": "./plugins/superpowers"`）で配る。中身は書き換えない（上流の写し。LICENSE〔MIT〕を残す）。固定の sha はルートの `upstream-pins.json` に置く（各 PC が読む `pins.json` には入れない）。外部の GitHub から別に clone させる形（github 形式は SSH で鍵の無い PC で入らず、url〔HTTPS〕形式も取得経路の `git ls-remote` は通るのに社員の PC で入らなかった。2026-11-09）はやめた
   - gstack: 固定する sha を `plugins/mitsuishi-dev/pins.json` に置く。gstack-bg.sh は導入・更新のとき、その sha を checkout して `./setup -q --no-plan-tune-hooks` を実行する（`gstack-upgrade` は使わない）。gstack 自身の `auto_upgrade` は `false` にそろえる（スキル実行時に最新へ上がって固定を外さないため）
-  - CI が毎日、両方の上流の最新の sha を調べ、変わっていれば「固定を上げる PR」を自動で作る（版を上げ、CHANGELOG に 1 行、テストを回す）。PR は CI が通れば自動で取り込まれ（`gh pr merge --auto --squash`、`BUMP_TOKEN` で）、全員へ届く（利用者の判断、2026-11-08）
+  - CI が毎日、両方の上流の最新の sha を調べ、変わっていれば「固定を上げる PR」を自動で作る（版を上げ、CHANGELOG に 1 行、テストを回す。superpowers は新しい sha の中身で `plugins/superpowers/` を丸ごと置き換え〔消えたファイルも消す〕、`upstream-pins.json` の sha を上げる）。PR は CI が通れば自動で取り込まれ（`gh pr merge --auto --squash`、`BUMP_TOKEN` で）、全員へ届く（利用者の判断、2026-11-08）
   - 自動の取り込みには、リポジトリ設定の「Allow auto-merge」と、main の保護で CI のジョブを必須チェックに指定することが要る（必須チェックが無いと CI を待たずに即取り込まれる）
-  - CI は自社のフックを確かめるだけで、上流の中身は確かめない。上流で不具合が出たら、その取り込みコミットを revert すれば固定が前の sha に戻り、全員が前の版に戻る（mitsuishi-dev の版は下げずに今より上げて出す。下げると届かない）。superpowers は revert では戻らない（版が上流で決まり、下がると届かない）。止めるときは管理設定の `enabledPlugins` で `false` にする
-  - superpowers は `sha` だけ変えても各 PC に届かない（版は superpowers 自身の plugin.json の `version` が優先される。code.claude.com/docs/en/plugins/loading.md）。届くのは上流が `version` を上げたときだけなので、固定を上げる PR は superpowers の `version` が変わったときだけ作る
+  - CI は自社のフックを確かめるだけで、上流の中身は確かめない。上流で不具合が出たら、その取り込みコミットを revert すれば固定が前の sha に戻り、全員が前の版に戻る（mitsuishi-dev の版は下げずに今より上げて出す。下げると届かない）。superpowers は取り込みを revert しても版が下がるため届かない。戻すときは `plugins/superpowers/` の中身を前の版にし、その plugin.json の `version` を今より上げて出す（上流の写しを書き換える唯一の例外。上流の `version` がその版を超えた日の自動の PR で上流の写しに戻る）。止めるだけなら管理設定の `enabledPlugins` で `false` にする
+  - superpowers は中身だけ変えても各 PC に届かない（版は superpowers 自身の plugin.json の `version` が優先される。code.claude.com/docs/en/plugins/loading.md）。届くのは `version` が上がったときだけなので、固定を上げる PR は上流の `version` が今の写しより semver で大きいときだけ作る（同じ・小さいときは見送り、理由をログと PR の本文に出す。小さいときも上げないのは、写しを戻して版を上げた後に上流の低い版で上書きしないため）
+  - 上流の写しは自社の検査の一部から外す: 禁止語の検査は `plugins/superpowers/` を見ない（自社の語は書かない場所で、非公開の語の一覧と上流の文言の重なりで毎日の PR を止めないため）。版の検査の「変えたら版を上げる」は `plugins/mitsuishi-dev/` だけ（superpowers の版は上流の plugin.json のもの）。JSON の構文検査と gitleaks は同梱した中身も見る
   - 固定を上げる PR で CI を走らせるため、PR は専用のトークン（secret `BUMP_TOKEN`）で作る（既定のトークンで作った PR では CI が走らず、保護ブランチで取り込めない）。トークンが無ければジョブを失敗させて知らせる。トークンの用意は導入時の作業
   - PR の本文に上流の差分の比較リンク（compare）を載せる。不具合を追うときに使う。`bump-upstream` ブランチには人が手で積まない（翌日の実行で上書きされる）
 - 公式プラグイン（frontend-design・claude-security）は公式マーケットプレイスの更新に追従する
