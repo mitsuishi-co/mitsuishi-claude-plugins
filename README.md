@@ -10,7 +10,7 @@
 - [ ] GitHub に `mitsuishi-co/mitsuishi-claude-plugins`（公開）を作って push し、main を保護ブランチにする（PR 必須・CI 必須・force push 禁止）
 - [ ] GitHub Actions の secret を置く: `FORBIDDEN_WORDS`（禁止語。改行かカンマ区切り。未設定なら検査を飛ばす）・`BUMP_TOKEN`（必須。このリポジトリの Contents と Pull requests に書き込める fine-grained トークン。無いと「上流の固定を上げる」ジョブが失敗して知らせる。既定のトークンで作った PR では CI が走らず取り込めないため）。秘密の検査（gitleaks）は本体を直接実行するのでライセンスキーは要らない
 - [ ] claude.ai の「組織設定 > Claude Code > 管理設定」（Owner 権限）に `admin/managed-settings.json` を貼って保存する。次のセッション開始時に全員へ入り、利用者は無効にできない
-- [ ] 社員の PC に Git for Windows が要る（フックと gstack の導入が Git Bash で動く）
+- [ ] 社員の PC に Git for Windows・Node.js・Bun を最初に入れる（Git が無いとプラグインが入らず、フックも動かない。gstack の導入には Node.js と Bun も要る）。PowerShell で `winget install --id Git.Git -e --source winget; winget install --id OpenJS.NodeJS.LTS -e --source winget; winget install --id Oven-sh.Bun -e --source winget`（社内のネットワークで msstore が証明書のエラーになるため `--source winget` を付ける）。入れたらアプリを開き直し、git のリポジトリのフォルダでセッションを始める（gstack は裏で入り、初回は最大 15 分）
 - [ ] 管理設定で入ったプラグインが「無効」で届くことがある。設定 → プラグインの「…」→「オンにする」で有効にする（CLI なら `claude plugin enable <名前>`）
 - [ ] 実行役（`executor`）に git の中のコードを 5 行以上 Write させて止まらないことを確かめる（フックの入力に `agent_id` が付いている）。メインに同じことをさせると `MITSUISHI-EDIT-001` で止まる
 - [ ] 管理設定の `env` に `MITSUISHI_HOOKS_OFF` を入れたとき、各 PC のフックが止まることを 1 台で確かめる（下の「全員を止める」）

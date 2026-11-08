@@ -9,6 +9,7 @@
 - 組織プラグインとして配り、Claude Code 利用時は必須にする
 - 実行役とプランナーを分ける
 - 土台は社内で実際に回している開発の設定（推測より実績を優先）
+- Claude Code を使う PC には Git for Windows・Node.js・Bun を最初に入れる（PC の管理ツールが無いので、各自が winget で入れる。手順は README）
 
 ## 2. モデル
 
