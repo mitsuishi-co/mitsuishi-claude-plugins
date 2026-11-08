@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # gstack の導入・毎日の更新（版は pins.json の sha に固定）。session-start から呼ばれる。
-#   source してから bg_status <起動したフォルダ>   BG_ACTION = run|none（裏で run を起動するか）、BG_STATUS = 注入する状態の 1 行
-#   bash gstack-bg.sh status <起動したフォルダ>      上の 2 つを 2 行で出す
+#   source してから bg_status   BG_ACTION = run|none（裏で run を起動するか）、BG_STATUS = 注入する状態の 1 行
+#   bash gstack-bg.sh status                       上の 2 つを 2 行で出す
 #   bash gstack-bg.sh run                          ロックを取って work を打ち切りつきで走らせ、状態ファイルを書く（裏で呼ぶ）
 #   bash gstack-bg.sh work full|config             本体。full = fetch → checkout → setup → 設定をそろえる、config = 設定をそろえるだけ。出力はすべて gstack.log
 # いつ走らせるか: 失敗から 1 時間未満は何もしない。gstack の今の HEAD が固定と違えば（固定が上がった・未導入・前回が未完了）すぐ full、
@@ -216,7 +216,7 @@ overwrote_note() {
 }
 
 bg_status() {
-  local cwd="$1" d
+  local d
   BG_ACTION=none; BG_STATUS=""
   if ! command -v git >/dev/null 2>&1; then
     BG_STATUS="【注意】編集ガード無効（git なし）。メインのコード編集を止められず、gstack も導入できない。Git を入れて起動し直すよう利用者に伝える。"
@@ -224,16 +224,6 @@ bg_status() {
   fi
   state_read
   current_head
-  git_judge "${cwd:-$PWD}"
-  if [ $? -ne 0 ]; then
-    if [ -n "$CUR_HEAD" ]; then
-      last_date
-      BG_STATUS="gstack: 導入済（最終更新 $REPLY）。git のリポジトリの外で起動したため、更新は確かめない。"
-    else
-      BG_STATUS="gstack: 未導入（git のリポジトリの外で起動したため導入しない。開発はリポジトリの中で始める）。"
-    fi
-    return
-  fi
   missing_tools
   if [ -n "$REPLY" ]; then
     BG_STATUS="【注意】gstack: 未導入または更新できない（$REPLY が無い）。README の手順で入れて起動し直すよう利用者に伝える。"
@@ -409,7 +399,7 @@ cmd_work() {
 
 if [ "$BG_SELF" = "$0" ]; then
   case "$1" in
-    status) bg_status "$2"; printf '%s\n%s\n' "$BG_ACTION" "$BG_STATUS" ;;
+    status) bg_status; printf '%s\n%s\n' "$BG_ACTION" "$BG_STATUS" ;;
     run) cmd_run ;;
     work) cmd_work "$2" ;;
   esac

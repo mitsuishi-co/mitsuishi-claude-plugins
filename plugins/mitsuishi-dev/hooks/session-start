@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # mitsuishi-dev SessionStart フック（タイムアウト 30 秒。常に exit 0）
 #   1. 案内 3 行・ワークフロー規則（SKILL.md）・MODELS.md・gstack の状態 1 行をセッションに注入する（gstack が失敗・注意の状態なら、利用者の画面にも 1 行出す = systemMessage）
-#   2. git のリポジトリの中で始めたときだけ、gstack の導入・毎日の更新を裏で始める（hooks/lib/gstack-bg.sh。待たない）
+#   2. どのフォルダで始めても（git があれば）、gstack の導入・毎日の更新を裏で始める（hooks/lib/gstack-bg.sh。待たない）
 #   注入文には止め方（環境変数の名前と値）を書かない（AI が自分でガードを外さないため。止め方は人向けの README だけ）
 # 停止: MITSUISHI_HOOKS_OFF（1・all・session-start。0・false・no・off・none は止めない。未知の値は全部止める）
 
@@ -32,7 +32,7 @@ CWD="$J_CWD"
 BG="$HOOK_DIR/lib/gstack-bg.sh"
 BG_ACTION=none; BG_STATUS=""
 if . "$BG" 2>/dev/null; then
-  bg_status "$CWD" </dev/null 2>/dev/null
+  bg_status </dev/null 2>/dev/null
 fi
 STATUS="$BG_STATUS"
 [ -n "$STATUS" ] || STATUS="【注意】gstack の状態を確かめられなかった（ログ: $MITSUISHI_STATE_DIR/gstack.log）。"

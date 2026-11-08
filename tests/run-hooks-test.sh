@@ -705,7 +705,7 @@ t "既定でない場所の異常は消さず・退避せず、失敗として�
 fresh
 SS_CWD="$OUTSIDE" ss
 sleep 1
-t "git の外で起動: 導入しない（理由を状態行に）" 'ctx_has "gstack: 未導入（git のリポジトリの外で起動したため" && [ ! -e "$SD/state" ] && [ -z "$(calls git)" ]' "$SS_OUT"
+t "git のリポジトリの外で始めても gstack の導入を裏で始める（BG_ACTION=run 相当）" 'ctx_has "gstack: 導入中（裏で導入を始めた" && ! ctx_has "リポジトリの外" && wait_for bg_done && [ "$(st fail_count)" = 0 ] && [ -n "$(calls git)" ]' "$SS_OUT"
 if PATH="$NOGIT_PATH" command -v git >/dev/null 2>&1; then
   skip "git が無いときの状態行" "git を外した PATH を作れない"
 else

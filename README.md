@@ -10,11 +10,11 @@
 - [ ] GitHub に `mitsuishi-co/mitsuishi-claude-plugins`（公開）を作って push し、main を保護ブランチにする（PR 必須・CI 必須・force push 禁止）
 - [ ] GitHub Actions の secret を置く: `FORBIDDEN_WORDS`（禁止語。改行かカンマ区切り。未設定なら検査を飛ばす）・`BUMP_TOKEN`（必須。このリポジトリの Contents と Pull requests に書き込める fine-grained トークン。無いと「上流の固定を上げる」ジョブが失敗して知らせる。既定のトークンで作った PR では CI が走らず取り込めないため）。秘密の検査（gitleaks）は本体を直接実行するのでライセンスキーは要らない
 - [ ] claude.ai の「組織設定 > Claude Code > 管理設定」（Owner 権限）に `admin/managed-settings.json` を貼って保存する。次のセッション開始時に全員へ入り、利用者は無効にできない
-- [ ] 社員の PC に Git for Windows・Node.js・Bun を最初に入れる（Git が無いとプラグインが入らず、フックも動かない。gstack の導入には Node.js と Bun も要る）。PowerShell で `winget install --id Git.Git -e --source winget; winget install --id OpenJS.NodeJS.LTS -e --source winget; winget install --id Oven-sh.Bun -e --source winget`（社内のネットワークで msstore が証明書のエラーになるため `--source winget` を付ける）。入れたらアプリを開き直し、git のリポジトリのフォルダでセッションを始める（gstack は裏で入り、初回は最大 15 分）
+- [ ] 社員の PC に Git for Windows・Node.js・Bun を最初に入れる（Git が無いとプラグインが入らず、フックも動かない。gstack の導入には Node.js と Bun も要る）。PowerShell で `winget install --id Git.Git -e --source winget; winget install --id OpenJS.NodeJS.LTS -e --source winget; winget install --id Oven-sh.Bun -e --source winget`（社内のネットワークで msstore が証明書のエラーになるため `--source winget` を付ける）。入れたらアプリを開き直し、セッションを始める（どのフォルダでもよい。gstack は裏で入り、初回は最大 15 分）
 - [ ] 管理設定で入ったプラグインが「無効」で届くことがある。設定 → プラグインの「…」→「オンにする」で有効にする（CLI なら `claude plugin enable <名前>`）
 - [ ] 実行役（`executor`）に git の中のコードを 5 行以上 Write させて止まらないことを確かめる（フックの入力に `agent_id` が付いている）。メインに同じことをさせると `MITSUISHI-EDIT-001` で止まる
 - [ ] 管理設定の `env` に `MITSUISHI_HOOKS_OFF` を入れたとき、各 PC のフックが止まることを 1 台で確かめる（下の「全員を止める」）
-- [ ] 開発に使う PC で、git のリポジトリの中で Claude Code を起動し、裏の gstack の導入がセッション終了後も完了して `~/.claude/mitsuishi-dev/state` に書かれることを確かめる（Windows を含む）
+- [ ] 開発に使う PC で Claude Code を起動し、裏の gstack の導入がセッション終了後も完了して `~/.claude/mitsuishi-dev/state` に書かれることを確かめる（Windows を含む）
 - [ ] gstack の導入・更新の後、`~/.claude/settings.json` に余計なフックが増えていないことを確かめる
 - [ ] `ui-executor` を起動し、読み込まれたスキルの名前を聞くと `frontend-design` が含まれることを確かめる（`claude --debug` の出力に frontend-design と skip を含む行が無い）
 - [ ] 1 か月後に、全員の既定 `best` の利用量を確かめる（管理設定の `model` は部署ごとに分けられない）
@@ -40,7 +40,7 @@
   - メイン（プランナー）と実行役（サブエージェント）の分担。モデルは別名で書き、対応表は `MODELS.md` の 1 か所
   - エージェント `executor`（実行役）・`ui-executor`（画面専用の実行役、起動時に frontend-design を読み込む）・`advisor`（相談役）・`outside-voice`（外部レビュー役）
   - フックで止めるのは、メインのコード編集・メインによる Claude の設定とエージェント定義の編集・実行役からの再委託・advisor 以外への最上位モデルの指定だけ（下の「フックに止められたとき」）。フックは促しであり仕切りではない（Bash・PowerShell 経由の書き換え、2 行 Edit の連打、model を定義にも持たない起動は止めない）
-  - セッション開始時にワークフロー規則と `MODELS.md` と gstack の状態を注入し、git のリポジトリの中で始めたときだけ gstack の導入・毎日の更新を裏で行う（セッションは待たない）
+  - セッション開始時にワークフロー規則と `MODELS.md` と gstack の状態を注入し、どのフォルダで始めても（git があれば）gstack の導入・毎日の更新を裏で行う（セッションは待たない）
 - **superpowers**（`obra/superpowers` の固定の sha の写しを `plugins/superpowers/` に同梱し、相対パスで配る。中身は書き換えない）
   - 使うのは `test-driven-development`・`systematic-debugging`・`verification-before-completion`・`receiving-code-review` の 4 つだけ
   - superpowers だけ止める: 管理設定の `enabledPlugins` で `"superpowers@mitsuishi": false` にする
@@ -123,7 +123,7 @@ git commit -am "mitsuishi-dev を <戻したい版> の中身に戻す" && git p
   - **superpowers は上流の `version` が今の写しより大きいときだけ上げる**: Claude Code は plugin.json の `version` で更新を判断し、superpowers は自分の plugin.json に `version` を持つ（マーケットプレイス側の `version` より優先される）。中身だけ上げても各 PC には届かないため、上流の `version` が今の写しと同じ・小さい（写しを戻して版を上げた後など）・確かめられないときは superpowers を変えない（semver で比べる）（gstack だけが変わっていれば gstack だけ上げる）。上げるときは新しい sha の中身で `plugins/superpowers/` を丸ごと置き換え（消えたファイルも消す）、`upstream-pins.json` の sha を上げる
   - 禁止語の検査は `plugins/superpowers/` を見ない（上流の写しで自社の語を書かない場所。非公開の語の一覧と上流の文言の重なりで毎日の PR を止めないため）。JSON の構文検査と gitleaks は同梱した中身も見る
   - PR は secret `BUMP_TOKEN` で作る。無ければジョブが失敗して知らせる。`bump-upstream` ブランチには手で積まない
-- **gstack**: セッションを git のリポジトリの中で始めたときだけ、裏で（`hooks/lib/gstack-bg.sh`）動く。gstack の今の HEAD が固定の sha と違えば（固定が上がった・未導入・前回が未完了）すぐ、固定の sha を checkout して `./setup -q --no-plan-tune-hooks` を実行する。同じなら、前回の成功から 24 時間ごとに設定を `auto_upgrade: false`・`codex_reviews: disabled`・`telemetry: off` にそろえるだけ。失敗から 1 時間未満は何もしない。打ち切りは初回の導入 900 秒・更新 300 秒。`gstack-upgrade` は使わない。ログは `~/.claude/mitsuishi-dev/gstack.log`、状態は `~/.claude/mitsuishi-dev/state`
+- **gstack**: どのフォルダでセッションを始めても（git があれば）、裏で（`hooks/lib/gstack-bg.sh`）動く。gstack の今の HEAD が固定の sha と違えば（固定が上がった・未導入・前回が未完了）すぐ、固定の sha を checkout して `./setup -q --no-plan-tune-hooks` を実行する。同じなら、前回の成功から 24 時間ごとに設定を `auto_upgrade: false`・`codex_reviews: disabled`・`telemetry: off` にそろえるだけ。失敗から 1 時間未満は何もしない。打ち切りは初回の導入 900 秒・更新 300 秒。`gstack-upgrade` は使わない。ログは `~/.claude/mitsuishi-dev/gstack.log`、状態は `~/.claude/mitsuishi-dev/state`
   - 自分で入れていた gstack（HEAD が固定と違う）は固定の版で上書きし、その日の状態行で一度だけ知らせる
   - 3 回続けて失敗するとセッション開始時の状態行に出る。手で直すときは状態行に出る手順（`cd ~/.claude/skills/gstack && rm -f .git/index.lock && { git stash -u || true; } && git fetch --depth 1 <repo> <sha> && git checkout --detach <sha> && ./setup -q --no-plan-tune-hooks`）を実行する。`git stash -u` は手で変えたファイルを退避する（`git stash list` で確かめられる）
 
