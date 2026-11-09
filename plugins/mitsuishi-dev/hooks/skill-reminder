@@ -1,0 +1,78 @@
+#!/usr/bin/env bash
+# PreToolUse（Skill）と UserPromptSubmit
+#   gstack の段（/review・/cso・/autoplan・/qa・/design-review）を呼ぶ瞬間に、その段の社内の決まりを 1〜2 行添える
+#   （ワークフロー規則はセッション開始時に注入するだけなので、長いセッションで抜けるため）
+#   PreToolUse: tool_input.skill（gstack:review のような接頭辞・先頭の / は外し、小文字にして見る）
+#     MITSUISHI-SKILL-001: gstack-upgrade は止める（gstack は固定の版を使う。更新はプラグインが自動で行う）
+#   UserPromptSubmit: プロンプトの先頭（前後の空白を除く）の語が上のスラッシュコマンドなら同じ文を添える
+#     （/gstack-upgrade は止めず「実行しない」決まりの文を添えるだけ）
+#   それ以外・壊れた入力は何も出さない。実行役（サブエージェント）の中でも区別しない。常に exit 0
+# 停止: MITSUISHI_HOOKS_OFF（1・all・skill-reminder。0・false・no・off・none は止めない。未知の値は全部止める）
+
+if [ -n "${MITSUISHI_HOOKS_OFF:-}" ]; then
+  _off=$(printf '%s' "$MITSUISHI_HOOKS_OFF" | tr 'A-Z' 'a-z' | tr -d ' \t\r\n')
+  set -f; IFS=,
+  for _t in $_off; do
+    case "$_t" in ''|0|false|no|off|none|planner-edit|subagent|session-start) ;; *) exit 0 ;; esac
+  done
+  unset IFS; set +f
+fi
+
+HOOK=skill-reminder
+_self="${0//\\//}"
+case "$_self" in */*) _dir="${_self%/*}" ;; *) _dir=. ;; esac
+. "$_dir/lib/common.sh" 2>/dev/null || {
+  cat >/dev/null 2>&1
+  mkdir -p "$HOME/.claude/mitsuishi-dev" 2>/dev/null
+  printf '%s\t%s\t%s\t-\t%s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$HOOK" MITSUISHI-FAIL-LIB "lib/common.sh を読めない" >>"$HOME/.claude/mitsuishi-dev/hooks.log" 2>/dev/null
+  exit 0
+}
+
+read_input 2>/dev/null
+if [ "$J_ERR" = 1 ]; then
+  hook_log "$HOOK" MITSUISHI-FAIL-JSON - "入力の JSON を読めない"
+  exit 0
+fi
+
+# 呼び出しの形: hook_event_name で見分ける（無ければ tool_name の有無）
+EVENT="$J_EVENT"
+[ -n "$EVENT" ] || { [ -n "$J_TOOL" ] && EVENT=PreToolUse; }
+case "$EVENT" in
+  PreToolUse)
+    [ "$J_TOOL" = Skill ] || exit 0
+    RAW="$J_SKILL" ;;
+  UserPromptSubmit)
+    RAW="${J_PROMPT#$'\xef\xbb\xbf'}"
+    # 先頭の空白を除き、最初の語（空白・全角の空白・\ まで）がスラッシュコマンドのときだけ
+    RAW="${RAW#"${RAW%%[![:space:]]*}"}"
+    case "$RAW" in /*) ;; *) exit 0 ;; esac
+    RAW="${RAW%%[[:space:]\\]*}"
+    RAW="${RAW%%　*}" ;;
+  *) exit 0 ;;
+esac
+
+# 名前の正規化: 制御文字・空白を落とし、先頭の / と接頭辞（最後の : まで）を外して小文字に
+one_line "$RAW"; NAME="${REPLY//[[:space:]]/}"
+NAME="${NAME#/}"
+NAME="${NAME##*:}"
+lower "$NAME"; NAME="$REPLY"
+
+MSG=""
+case "$NAME" in
+  review) MSG="社内の決まり: 業務面の声は mitsuishi-dev:outside-voice、2 つ目の声は組み込みの /code-review を必ず回す。" ;;
+  cso) MSG="社内の決まり: 公式プラグイン claude-security のスキャン（claude-security スキル）を添える。" ;;
+  autoplan) MSG="社内の決まり: 外部レビューの段は mitsuishi-dev:outside-voice。画面があるプランは /plan-design-review を省かない。実装は mitsuishi-dev:executor（画面は mitsuishi-dev:ui-executor）。" ;;
+  qa|design-review) MSG="社内の決まり: 見つけた不具合の修正は実行役（画面は mitsuishi-dev:ui-executor）に回す。" ;;
+  gstack-upgrade)
+    if [ "$EVENT" = PreToolUse ]; then
+      deny "$HOOK" MITSUISHI-SKILL-001 Skill "$NAME" \
+        "社内の決まりで gstack は固定の版を使う。更新はプラグインが自動で行う。" \
+        "止めたもの: Skill で ${NAME}（gstack-upgrade は実行しない）。"
+    fi
+    MSG="社内の決まり: /gstack-upgrade は実行しない。gstack は固定の版を使い、更新はプラグインが自動で行う（MITSUISHI-SKILL-001）。" ;;
+  *) exit 0 ;;
+esac
+
+json_escape "$MSG"
+printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$EVENT" "$REPLY"
+exit 0

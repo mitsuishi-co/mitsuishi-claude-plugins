@@ -36,6 +36,7 @@ description: 社内標準の開発ワークフロー。メイン（プランナ�
 
 - gstack が途中で止まっても手作業の代用に切り替えない。エラーが示す直し方か、フォールバック（個別の `/plan-*-review`、または `/context-save` → 新しいセッション → `/context-restore`）で続ける
 - Web を見るときは gstack の `/browse` を使う
+- `/review`・`/cso`・`/autoplan`・`/qa`・`/design-review` を呼ぶと、その段の決まりをフックが添える。`/gstack-upgrade` は止まる（MITSUISHI-SKILL-001）
 
 ## フロントエンド
 
