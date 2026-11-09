@@ -13,7 +13,7 @@ if [ -n "${MITSUISHI_HOOKS_OFF:-}" ]; then
   _off=$(printf '%s' "$MITSUISHI_HOOKS_OFF" | tr 'A-Z' 'a-z' | tr -d ' \t\r\n')
   set -f; IFS=,
   for _t in $_off; do
-    case "$_t" in ''|0|false|no|off|none|planner-edit|session-start) ;; *) exit 0 ;; esac
+    case "$_t" in ''|0|false|no|off|none|planner-edit|session-start|skill-reminder) ;; *) exit 0 ;; esac
   done
   unset IFS; set +f
 fi

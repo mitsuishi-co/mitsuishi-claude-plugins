@@ -191,14 +191,28 @@ last_date() {
   else REPLY=$(date -d "@$ST_SUCCESS" '+%Y-%m-%d' 2>/dev/null || date -r "$ST_SUCCESS" '+%Y-%m-%d' 2>/dev/null || printf '不明'); fi
 }
 
+# have <コマンド> : PATH にあるか。is_windows : Git Bash などの Windows か（uname が MINGW・MSYS・CYGWIN）
+have() { command -v "$1" >/dev/null 2>&1; }
+is_windows() { case "$(uname -s 2>/dev/null)" in MINGW*|MSYS*|CYGWIN*) return 0 ;; esac; return 1; }
+
+# missing_tools : 足りないもの（Git・Node.js〔Windows だけ〕・Bun の順）を「と」でつないで REPLY に、
+#   それを入れる winget の 1 行（; でつなぐ。Windows 以外は空）を MISSING_WINGET に
 missing_tools() {
-  local m=""
-  command -v bun >/dev/null 2>&1 || m="$m Bun"
-  case "${OSTYPE:-}" in
-    msys*|cygwin*|win32*) command -v node >/dev/null 2>&1 || m="$m Node.js" ;;
-  esac
-  REPLY="${m# }"
+  local names="" cmds="" win=0 n id
+  is_windows && win=1
+  for n in git node bun; do
+    case "$n" in
+      git) have git && continue; names="${names:+$names と }Git"; id=Git.Git ;;
+      node) { [ "$win" = 1 ] && ! have node; } || continue; names="${names:+$names と }Node.js"; id=OpenJS.NodeJS.LTS ;;
+      bun) have bun && continue; names="${names:+$names と }Bun"; id=Oven-sh.Bun ;;
+    esac
+    cmds="${cmds:+$cmds; }winget install --id $id -e --source winget"
+  done
+  REPLY="$names"
+  MISSING_WINGET=""
+  [ "$win" = 1 ] && MISSING_WINGET="$cmds"
 }
+WINGET_LEAD="PowerShell で次を実行し、アプリを完全に終了して開き直すよう利用者に伝える"
 
 manual_steps() {
   pins_read
@@ -218,15 +232,24 @@ overwrote_note() {
 bg_status() {
   local d
   BG_ACTION=none; BG_STATUS=""
-  if ! command -v git >/dev/null 2>&1; then
-    BG_STATUS="【注意】編集ガード無効（git なし）。メインのコード編集を止められず、gstack も導入できない。Git を入れて起動し直すよう利用者に伝える。"
+  if ! have git; then
+    missing_tools
+    if [ -n "$MISSING_WINGET" ]; then
+      BG_STATUS="【注意】編集ガード無効（git なし）。メインのコード編集を止められず、gstack も導入できない（$REPLY が無い）。$WINGET_LEAD: $MISSING_WINGET"
+    else
+      BG_STATUS="【注意】編集ガード無効（git なし）。メインのコード編集を止められず、gstack も導入できない。Git を入れて起動し直すよう利用者に伝える。"
+    fi
     return
   fi
   state_read
   current_head
   missing_tools
   if [ -n "$REPLY" ]; then
-    BG_STATUS="【注意】gstack: 未導入または更新できない（$REPLY が無い）。README の手順で入れて起動し直すよう利用者に伝える。"
+    if [ -n "$MISSING_WINGET" ]; then
+      BG_STATUS="【注意】gstack: 未導入または更新できない（$REPLY が無い）。$WINGET_LEAD: $MISSING_WINGET"
+    else
+      BG_STATUS="【注意】gstack: 未導入または更新できない（$REPLY が無い）。README の手順で入れて起動し直すよう利用者に伝える。"
+    fi
     return
   fi
   if lock_fresh; then

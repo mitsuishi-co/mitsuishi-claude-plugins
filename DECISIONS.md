@@ -28,7 +28,7 @@
 | `advisor` | fable（最上位） | 相談役。読み取りだけ |
 | `outside-voice` | opus | 外部レビュー役（業務の立場から疑う）。読み取りだけ |
 
-## 4. フック（止めるのは 3 つ。フックは促しであり仕切りではない）
+## 4. フック（止めるのは 3 つと gstack-upgrade。gstack の段の決まりを添えるものが 1 つ。フックは促しであり仕切りではない）
 
 止めるもの:
 1. **メインのコード編集**（`MITSUISHI-EDIT-001`）: git のリポジトリの中のファイルだけが対象。文書（`*.md`・`*.markdown`、ファイル名がちょうど VERSION・CHANGELOG・TODOS か、それに `.md`・`.txt` が付いたもの）は通す。Edit で old_string・new_string がどちらも 2 行以内かつ 300 バイト以内なら通す（replace_all は除く）。MultiEdit は各 edit の行数の合計が 2 行以内かつ合計 300 バイト以内なら通す。Write と NotebookEdit のコードは止める。パスは切り詰めずに判定し、読み取りで切り詰められたパスは例外に入れない
@@ -38,6 +38,11 @@
    - 判定の前にパスを正規化する（`\`→`/`、`//`・`/./`・`..` をつぶす、Windows の末尾のドット・空白と `:` 以降の代替データストリームを落とす、大文字小文字を区別しない）。切り詰められたパスは止める
 2. **実行役からの再委託**（`MITSUISHI-AGENT-001`）: 入力の最上位に `agent_id` があれば止める
 3. **advisor 以外への最上位モデルの指定**（`MITSUISHI-AGENT-002`）: `model` が MODELS.md の `TOP_ALIASES`（別名の完全一致）か `TOP_PREFIXES`（正式名の前方一致）に当たれば止める。`model` を省いたときは、subagent_type のエージェント定義（プロジェクトの `.claude/agents/`（cwd から git のルートまで上って探す。BOM 付きも読む）・`~/.claude/agents/`（サブフォルダも）・`~/.claude/plugins/` の下の各プラグインの `agents/`）から、frontmatter の `name:` が一致するもの（名前空間つきならそのプラグインのもの）を探し、`model` を同じ表で照合する（YAML のコメント・引用符は取り除く）。advisor として通すのは、名前が `advisor` か `mitsuishi-dev:advisor` のものだけ
+
+添えるもの（2.4.4 で追加。`hooks/skill-reminder`。止めるのは gstack-upgrade だけ）:
+4. **gstack の段の決まりを添える**: PreToolUse（`Skill`）の `tool_input.skill`（`gstack:review` のような接頭辞・先頭の `/` は外し、小文字で見る）と、UserPromptSubmit のプロンプトの先頭の語（前後の空白・BOM を除き、空白・全角の空白・`\` で切る）が、`review`（業務面の声は `mitsuishi-dev:outside-voice`、2 つ目の声は組み込みの `/code-review`）・`cso`（`claude-security` を添える）・`autoplan`（外部レビューは `outside-voice`、画面があれば `/plan-design-review`、実装は `executor`・画面は `ui-executor`）・`qa`・`design-review`（修正は実行役へ）なら、その決まりを `additionalContext` で 1〜2 行添える。ワークフロー規則はセッション開始時に注入するだけで、長いセッションで抜けるため。実行役の中でも区別しない
+5. **gstack-upgrade を止める**（`MITSUISHI-SKILL-001`）: Skill の `gstack-upgrade` は拒否する（gstack は固定の版を使い、更新はプラグインが自動で行う）。プロンプトの `/gstack-upgrade` は止めず、「実行しない」決まりを添えるだけ
+   - それ以外・壊れた入力・awk が無いときは何も出さない（作業を止めない）
 
 既知の限界（2.3.1 で追記。普段使いで当たらない抜け道はコードを足さずここに書く）:
 - フックは事故防止の柵で、攻撃への防御ではない
@@ -56,14 +61,14 @@ git の判定: 対象ファイルのパスの `\` を `/` に直し、存在す�
 
 失敗の扱い: lib を読めない・JSON を読めないときは通す（全員の作業を止めない）が、ログに 1 行残す。
 
-停止: 環境変数 `MITSUISHI_HOOKS_OFF` の 1 つだけ。`1`・`all` = 全フック、`planner-edit`・`subagent`・`session-start` をカンマ区切りで指定するとそのフックだけ。空白・大文字小文字は正規化し、`0`・`false`・`no`・`off`・`none` は「止めない」、それ以外の未知の値は全部止める。判定は各フックの最初（lib を読む前）。全員を止めるときは管理者が管理設定の `env` に足す（効くことを導入時に実機で確かめる）。それも効かない旧版では `enabledPlugins` の `mitsuishi-dev@mitsuishi` を false にする。
+停止: 環境変数 `MITSUISHI_HOOKS_OFF` の 1 つだけ。`1`・`all` = 全フック、`planner-edit`・`subagent`・`session-start`・`skill-reminder` をカンマ区切りで指定するとそのフックだけ。空白・大文字小文字は正規化し、`0`・`false`・`no`・`off`・`none` は「止めない」、それ以外の未知の値は全部止める。判定は各フックの最初（lib を読む前）。全員を止めるときは管理者が管理設定の `env` に足す（効くことを導入時に実機で確かめる）。それも効かない旧版では `enabledPlugins` の `mitsuishi-dev@mitsuishi` を false にする。
 
 ログ: `~/.claude/mitsuishi-dev/hooks.log` に拒否と失敗を 1 行ずつ（時刻・フック・識別子・ツール・対象）。1500 行を超えたら最後の 1000 行に切り詰める（失敗は無視）。PC の中だけに置き、対象のパスはそのまま残す。
 
 ## 5. セッション開始（session-start）
 
 - タイムアウトは 30 秒。常に exit 0
-- 注入文: 先頭に案内 3 行（このプラグインの役目・フックに止められたら利用者に相談すること・README の URL）。止め方は書かない→ ワークフロー規則（SKILL.md）→ MODELS.md → gstack の状態 1 行（導入済・最終更新日／導入中／未導入〔git の外で起動、など理由〕／更新に 3 回続けて失敗〔ログのパスと手で直す手順〕／編集ガード無効〔git なし〕）。注入する文字列は制御文字を落としてから JSON にする
+- 注入文: 先頭に案内 3 行（このプラグインの役目・フックに止められたら利用者に相談すること・README の URL）。止め方は書かない→ ワークフロー規則（SKILL.md）→ MODELS.md → gstack の状態 1 行（導入済・最終更新日／導入中／未導入〔git の外で起動、など理由〕／更新に 3 回続けて失敗〔ログのパスと手で直す手順〕／Git・Node.js・Bun が足りない〔Windows では足りないものだけを入れる winget の 1 行と、アプリを開き直すこと〕／編集ガード無効〔git なし〕）。注入する文字列は制御文字を落としてから JSON にする
 - gstack の導入と毎日の更新は、どのフォルダで始めても、git があれば行う。社員は開発に使う前提で Git・Node.js・Bun を入れるため
 - 導入・更新は `hooks/lib/gstack-bg.sh` が裏で行い、セッションは待たない（`( … ) </dev/null >/dev/null 2>&1 &`）。session-start は呼ぶだけ
 - gstack-bg.sh:

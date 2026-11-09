@@ -55,11 +55,12 @@ json_escape() {
 #   J_ERR（読めない）・J_TOOL・J_AGENT_ID・J_AGENT_TYPE・J_CWD・J_FILE・J_FILE_TR（切り詰め）・J_NB・J_NB_TR
 #   Edit: J_OLD_L・J_OLD_B・J_NEW_L・J_NEW_B・J_REPLACE_ALL／Write: J_CONTENT_L／NotebookEdit: J_SRC_L
 #   MultiEdit: J_EDITS_SEEN・J_EDITS_BAD（replace_all あり）・J_EDITS_L・J_EDITS_B（各 edit の多い方の合計）
-#   Agent: J_TYPE・J_MODEL
+#   Agent: J_TYPE・J_MODEL／Skill: J_SKILL／J_EVENT（hook_event_name）・J_PROMPT（UserPromptSubmit。512 文字まで）
 read_input() {
   local flat k l b tr v idx
   local -a el eb
   J_ERR=0; J_TOOL=; J_AGENT_ID=; J_AGENT_TYPE=; J_CWD=; J_FILE=; J_FILE_TR=0; J_NB=; J_NB_TR=0
+  J_SKILL=; J_EVENT=; J_PROMPT=
   J_OLD_L=0; J_OLD_B=0; J_NEW_L=0; J_NEW_B=0; J_REPLACE_ALL=; J_CONTENT_L=0; J_SRC_L=0
   J_EDITS_SEEN=0; J_EDITS_BAD=0; J_EDITS_L=0; J_EDITS_B=0; J_TYPE=; J_MODEL=
   flat=$(LC_ALL=C awk -f "$HOOK_LIB_DIR/json-flatten.awk") || { J_ERR=1; return; }
@@ -79,6 +80,9 @@ read_input() {
       tool_input.new_source) J_SRC_L=$l ;;
       tool_input.subagent_type) J_TYPE=$v ;;
       tool_input.model) J_MODEL=$v ;;
+      tool_input.skill) J_SKILL=$v ;;
+      hook_event_name) J_EVENT=$v ;;
+      prompt) J_PROMPT=$v ;;
       tool_input.edits\[*)
         J_EDITS_SEEN=1
         idx="${k#tool_input.edits\[}"; idx="${idx%%\]*}"

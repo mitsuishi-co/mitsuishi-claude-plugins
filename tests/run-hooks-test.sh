@@ -383,6 +383,132 @@ check "壊れた JSON は許可" guard-subagent allow '{"tool_name":'
 OUT=$(A "" Agent executor fable | bash "$TMP/nolib/hooks/guard-subagent" 2>&1)
 t "lib を読めないときは許可し hooks.log に 1 行" '! printf "%s" "$OUT" | grep -q deny && tail -n 1 "$HLOG" | grep -q "subagent	MITSUISHI-FAIL-LIB"'
 
+echo "── skill-reminder ──"
+# SK <スキル名> [<最上位に足す JSON>] : PreToolUse（Skill）の入力。UP <プロンプト> : UserPromptSubmit の入力
+SK() { printf '{"session_id":"t","hook_event_name":"PreToolUse",%s"cwd":"%s","tool_name":"Skill","tool_input":{"skill":"%s","args":"x"}}' "$2" "$(jstr "$OUTSIDE")" "$(jstr "$1")"; }
+UP() { printf '{"session_id":"t","hook_event_name":"UserPromptSubmit","cwd":"%s","prompt":"%s"}' "$(jstr "$OUTSIDE")" "$1"; }
+# sr <入力 JSON> [環境変数=値 ...] : skill-reminder を走らせて SR_OUT・SR_RC に
+sr() { local in="$1"; shift; SR_OUT=$(printf '%s' "$in" | env "$@" bash "$HOOKS/skill-reminder" 2>&1); SR_RC=$?; }
+# sr_ctx <イベント> <含む文字列> : 1 行の JSON で、hookEventName と additionalContext が合い、止めていない
+sr_ctx() {
+  [ "$SR_RC" = 0 ] && [ "$(printf '%s\n' "$SR_OUT" | wc -l | tr -d ' ')" = 1 ] \
+    && printf '%s' "$SR_OUT" | grep -q "^{\"hookSpecificOutput\":{\"hookEventName\":\"$1\",\"additionalContext\":\"[^\"]*$2[^\"]*\"}}$" \
+    && ! printf '%s' "$SR_OUT" | grep -q permissionDecision
+}
+sr_none() { [ "$SR_RC" = 0 ] && [ -z "$SR_OUT" ]; }
+RV="業務面の声は mitsuishi-dev:outside-voice、2 つ目の声は組み込みの /code-review を必ず回す"
+CS="公式プラグイン claude-security のスキャン（claude-security スキル）を添える"
+AP="外部レビューの段は mitsuishi-dev:outside-voice。画面があるプランは /plan-design-review を省かない。実装は mitsuishi-dev:executor（画面は mitsuishi-dev:ui-executor）"
+QA="見つけた不具合の修正は実行役（画面は mitsuishi-dev:ui-executor）に回す"
+for s in review gstack:review /review /gstack:review " Review "; do
+  sr "$(SK "$s")"; t "Skill「$s」は /review の決まりを添える" 'sr_ctx PreToolUse "社内の決まり: $RV"' "$SR_OUT"
+done
+for s in cso gstack:cso /cso; do
+  sr "$(SK "$s")"; t "Skill「$s」は claude-security を添える決まり" 'sr_ctx PreToolUse "$CS"' "$SR_OUT"
+done
+for s in autoplan gstack:autoplan /autoplan; do
+  sr "$(SK "$s")"; t "Skill「$s」は /autoplan の決まり" 'sr_ctx PreToolUse "$AP"' "$SR_OUT"
+done
+for s in qa design-review gstack:qa /gstack:design-review; do
+  sr "$(SK "$s")"; t "Skill「$s」は修正を実行役に回す決まり" 'sr_ctx PreToolUse "$QA"' "$SR_OUT"
+done
+for s in gstack-upgrade gstack:gstack-upgrade /gstack-upgrade GSTACK-UPGRADE; do
+  check "Skill「$s」は拒否（MITSUISHI-SKILL-001）" skill-reminder deny "$(SK "$s")"
+  t "Skill「$s」の拒否文は 3 行・識別子・固定の版" 'reason | grep -q "^\[MITSUISHI-SKILL-001\] 社内の決まりで gstack は固定の版を使う。更新はプラグインが自動で行う。" && [ "$(reason | grep -o "\\\\n" | wc -l | tr -d " ")" = 2 ] && ! reason | grep -q MITSUISHI_HOOKS_OFF' "$(reason)"
+done
+t "gstack-upgrade の拒否は hooks.log に 1 行" 'tail -n 1 "$HLOG" | grep -q "skill-reminder	MITSUISHI-SKILL-001	Skill	gstack-upgrade"'
+sr "$(SK review "$SUB")"; t "実行役の中でも同じ決まりを添える" 'sr_ctx PreToolUse "$RV"' "$SR_OUT"
+check "実行役の中でも gstack-upgrade は拒否" skill-reminder deny "$(SK gstack-upgrade "$SUB")"
+for s in qa-only plan-design-review reviewx review2 code-review ship mitsuishi-dev:workflow "" ":"; do
+  sr "$(SK "$s")"; t "対象外の Skill「$s」は何も出さない" 'sr_none' "$SR_OUT"
+done
+sr '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"/review"}}'
+t "Skill 以外のツールは何も出さない" 'sr_none' "$SR_OUT"
+sr '{"tool_name":"Skill","tool_input":{"skill":"cso"}}'
+t "hook_event_name が無くても tool_name があれば PreToolUse として扱う" 'sr_ctx PreToolUse "$CS"' "$SR_OUT"
+for bad in '{"tool_name":' '' 'not json' '{"hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"rev
+iew"}}' '[1,2]'; do
+  sr "$bad"; t "壊れた入力（${bad:0:20}…）は何も出さず exit 0" 'sr_none' "$SR_OUT"
+done
+sr '{"hook_event_name":"SessionStart","cwd":"/tmp"}'
+t "ほかのイベントは何も出さない" 'sr_none' "$SR_OUT"
+sr "$(SK review)" MITSUISHI_HOOKS_OFF=skill-reminder; t "MITSUISHI_HOOKS_OFF=skill-reminder で止まる" 'sr_none' "$SR_OUT"
+sr "$(SK gstack-upgrade)" MITSUISHI_HOOKS_OFF=1; t "MITSUISHI_HOOKS_OFF=1 で gstack-upgrade も止めない" 'sr_none' "$SR_OUT"
+sr "$(SK review)" MITSUISHI_HOOKS_OFF=planner-edit,subagent,session-start; t "ほかのフックだけ止めたときは動く" 'sr_ctx PreToolUse "$RV"' "$SR_OUT"
+check "MITSUISHI_HOOKS_OFF=skill-reminder では編集ガードは動く" guard-planner-edit deny "$W" MITSUISHI_HOOKS_OFF=skill-reminder
+check "MITSUISHI_HOOKS_OFF=skill-reminder では再委託のガードは動く" guard-subagent deny "$(A "$SUB" Agent executor)" MITSUISHI_HOOKS_OFF=skill-reminder
+# jq も awk も無い PATH でも止めない（JSON を読めないとして何も出さない）
+mkdir -p "$TMP/emptybin"
+SR_OUT=$(printf '%s' "$(SK gstack-upgrade)" | PATH="$TMP/emptybin" "$BASH" "$HOOKS/skill-reminder" 2>&1); SR_RC=$?
+t "awk の無い PATH では何も出さず exit 0（gstack-upgrade も止めない）" 'sr_none' "$SR_OUT"
+cp "$HOOKS/skill-reminder" "$TMP/nolib/hooks/"
+sr_nolib=$(printf '%s' "$(SK gstack-upgrade)" | bash "$TMP/nolib/hooks/skill-reminder" 2>&1); SR_RC=$?
+t "lib を読めないときは何も出さず hooks.log に 1 行" '[ "$SR_RC" = 0 ] && [ -z "$sr_nolib" ] && tail -n 1 "$HLOG" | grep -q "skill-reminder	MITSUISHI-FAIL-LIB"' "$sr_nolib"
+
+# UserPromptSubmit: 先頭（前後の空白を除く）の語がスラッシュコマンドのときだけ
+for p in "/review" "/review 差分を見て" "  /review  " '\n\t/review\n' "/gstack:review" "/REVIEW"; do
+  sr "$(UP "$p")"; t "プロンプト「$p」は /review の決まり" 'sr_ctx UserPromptSubmit "$RV"' "$SR_OUT"
+done
+sr "$(UP "/cso 認証")"; t "プロンプト /cso は claude-security の決まり" 'sr_ctx UserPromptSubmit "$CS"' "$SR_OUT"
+sr "$(UP "/autoplan")"; t "プロンプト /autoplan の決まり" 'sr_ctx UserPromptSubmit "$AP"' "$SR_OUT"
+sr "$(UP "/qa http://localhost:3000")"; t "プロンプト /qa の決まり" 'sr_ctx UserPromptSubmit "$QA"' "$SR_OUT"
+sr "$(UP "/design-review")"; t "プロンプト /design-review の決まり" 'sr_ctx UserPromptSubmit "$QA"' "$SR_OUT"
+sr "$(UP '/qa　全角の空白')"; t "プロンプトの語は全角の空白（\\u3000 の形）の前で切る" 'sr_ctx UserPromptSubmit "$QA"' "$SR_OUT"
+sr "$(UP '/qa　全角の空白')"; t "プロンプトの語は全角の空白（生の文字）の前で切る" 'sr_ctx UserPromptSubmit "$QA"' "$SR_OUT"
+sr "$(UP '/qa\\x')"; t "プロンプトの語は \\ の前で切る" 'sr_ctx UserPromptSubmit "$QA"' "$SR_OUT"
+sr "$(UP '﻿/review')"; t "プロンプトの先頭の BOM（\\ufeff の形）を除いて判定" 'sr_ctx UserPromptSubmit "$RV"' "$SR_OUT"
+sr "$(printf '{"hook_event_name":"UserPromptSubmit","prompt":"\xef\xbb\xbf/review"}')"
+t "プロンプトの先頭の BOM（生のバイト）を除いて判定" 'sr_ctx UserPromptSubmit "$RV"' "$SR_OUT"
+sr "$(UP "/gstack-upgrade")"
+t "プロンプト /gstack-upgrade は止めず「実行しない」決まりを添える" 'sr_ctx UserPromptSubmit "社内の決まり: /gstack-upgrade は実行しない。gstack は固定の版を使い、更新はプラグインが自動で行う（MITSUISHI-SKILL-001）。"' "$SR_OUT"
+for p in "review して" "差分を /review して" "/reviewx" "/qa-only" "/plan-design-review" "/" "" "   " "/code-review"; do
+  sr "$(UP "$p")"; t "プロンプト「$p」は何も出さない" 'sr_none' "$SR_OUT"
+done
+sr "$(UP "/review")" MITSUISHI_HOOKS_OFF=all; t "MITSUISHI_HOOKS_OFF=all ではプロンプトにも何も出さない" 'sr_none' "$SR_OUT"
+sr "$(UP "$(rep a 5000)")"; t "長いプロンプトでも何も出さず exit 0" 'sr_none' "$SR_OUT"
+sr "$(UP "/review $(rep a 5000)")"; t "長いプロンプトでも先頭のコマンドを見る" 'sr_ctx UserPromptSubmit "$RV"' "$SR_OUT"
+if command -v node >/dev/null 2>&1; then
+  sr "$(UP "/autoplan")"
+  t "UserPromptSubmit の出力は JSON として読める" 'printf "%s" "$SR_OUT" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const j=JSON.parse(s).hookSpecificOutput;process.exit(j.hookEventName===\"UserPromptSubmit\"&&j.additionalContext.startsWith(\"社内の決まり: \")?0:1)})"' "$SR_OUT"
+  check "（gstack-upgrade の拒否）" skill-reminder deny "$(SK gstack-upgrade)"
+  t "PreToolUse の拒否の出力は JSON として読める" 'printf "%s" "$LAST_OUT" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const j=JSON.parse(s).hookSpecificOutput;process.exit(j.hookEventName===\"PreToolUse\"&&j.permissionDecision===\"deny\"?0:1)})"' "$LAST_OUT"
+fi
+
+echo "── gstack-bg: 足りない道具の状態行 ──"
+# bgs <Windows か 0|1> <無いもの（空白区切り）> : gstack-bg.sh を読み、have と is_windows を差し替えて bg_status の BG_STATUS を BGS に
+bgs() {
+  BGS=$(HOME="$TMP/bgs-home" GSTACK_DIR="$TMP/bgs-home/gs" bash -c '
+    . "$1/lib/gstack-bg.sh" || exit 1
+    W="$2"; MISS=" $3 "
+    is_windows() { [ "$W" = 1 ]; }
+    have() { case "$MISS" in *" $1 "*) return 1 ;; esac; return 0; }
+    bg_status; printf "%s" "$BG_STATUS"' _ "$HOOKS" "$1" "$2" 2>&1)
+}
+WG_GIT="winget install --id Git.Git -e --source winget"
+WG_NODE="winget install --id OpenJS.NodeJS.LTS -e --source winget"
+WG_BUN="winget install --id Oven-sh.Bun -e --source winget"
+LEAD="PowerShell で次を実行し、アプリを完全に終了して開き直すよう利用者に伝える"
+bgs 1 "node bun"
+t "Windows・Node.js と Bun が無い: 2 つの winget を ; でつなぐ" \
+  '[ "$BGS" = "【注意】gstack: 未導入または更新できない（Node.js と Bun が無い）。$LEAD: $WG_NODE; $WG_BUN" ]' "$BGS"
+bgs 1 "bun"
+t "Windows・Bun だけ無い: Bun の winget だけ" \
+  '[ "$BGS" = "【注意】gstack: 未導入または更新できない（Bun が無い）。$LEAD: $WG_BUN" ]' "$BGS"
+bgs 1 "git node bun"
+t "Windows・Git も Node.js も Bun も無い: 編集ガード無効の行に 3 つの winget" \
+  '[ "$BGS" = "【注意】編集ガード無効（git なし）。メインのコード編集を止められず、gstack も導入できない（Git と Node.js と Bun が無い）。$LEAD: $WG_GIT; $WG_NODE; $WG_BUN" ]' "$BGS"
+bgs 1 "git"
+t "Windows・Git だけ無い: Git の winget だけ（git なし の文言は残す）" \
+  '[ "$BGS" = "【注意】編集ガード無効（git なし）。メインのコード編集を止められず、gstack も導入できない（Git が無い）。$LEAD: $WG_GIT" ]' "$BGS"
+bgs 0 "bun"
+t "Windows 以外・Bun が無い: winget を出さず README の手順" \
+  '[ "$BGS" = "【注意】gstack: 未導入または更新できない（Bun が無い）。README の手順で入れて起動し直すよう利用者に伝える。" ]' "$BGS"
+bgs 0 "node"
+t "Windows 以外では Node.js が無くても足りないものに入れない" '! printf "%s" "$BGS" | grep -q "Node.js\|winget"' "$BGS"
+bgs 0 "git bun"
+t "Windows 以外・Git が無い: 今までの文（winget なし）" \
+  '[ "$BGS" = "【注意】編集ガード無効（git なし）。メインのコード編集を止められず、gstack も導入できない。Git を入れて起動し直すよう利用者に伝える。" ]' "$BGS"
+
 echo "── hooks.log の切り詰め ──"
 mkdir -p "$(dirname "$HLOG")"; : >"$HLOG"
 for i in $(seq 1 1500); do printf 'old %s\n' "$i"; done >>"$HLOG"
@@ -876,11 +1002,11 @@ if command -v node >/dev/null 2>&1; then
     'node -e "const j=require(process.argv[1]);process.exit(j.env&&j.env.CLAUDE_CODE_SUBAGENT_MODEL===\"opus\"&&!(\"CLAUDE_CODE_SUBAGENT_MODEL_FORCE\" in j.env)?0:1)" "$ROOT/admin/managed-settings.json"'
 
   # hooks.json の matcher と timeout
-  t "hooks.json: SessionStart（startup|clear|compact・30 秒）・編集（10 秒）・Agent|Task（10 秒）" \
+  t "hooks.json: SessionStart（startup|clear|compact・30 秒）・編集（10 秒）・Agent|Task（10 秒）・Skill と UserPromptSubmit（10 秒）" \
     'node -e "
       const h=require(process.argv[1]).hooks;
       const one=(ev,m,cmd,to)=>{const e=(h[ev]||[]).filter(x=>x.matcher===m);return e.length===1&&e[0].hooks.length===1&&e[0].hooks[0].command.includes(cmd)&&e[0].hooks[0].timeout===to&&e[0].hooks[0].shell===\"bash\";};
-      process.exit(one(\"SessionStart\",\"startup|clear|compact\",\"hooks/session-start\",30)&&one(\"PreToolUse\",\"Edit|Write|MultiEdit|NotebookEdit\",\"hooks/guard-planner-edit\",10)&&one(\"PreToolUse\",\"Agent|Task\",\"hooks/guard-subagent\",10)&&Object.keys(h).length===2&&h.PreToolUse.length===2?0:1)" "$CLAUDE_PLUGIN_ROOT/hooks/hooks.json"'
+      process.exit(one(\"SessionStart\",\"startup|clear|compact\",\"hooks/session-start\",30)&&one(\"PreToolUse\",\"Edit|Write|MultiEdit|NotebookEdit\",\"hooks/guard-planner-edit\",10)&&one(\"PreToolUse\",\"Agent|Task\",\"hooks/guard-subagent\",10)&&one(\"PreToolUse\",\"Skill\",\"hooks/skill-reminder\",10)&&one(\"UserPromptSubmit\",undefined,\"hooks/skill-reminder\",10)&&Object.keys(h).length===3&&h.PreToolUse.length===3&&h.UserPromptSubmit.length===1?0:1)" "$CLAUDE_PLUGIN_ROOT/hooks/hooks.json"'
 else
   skip "CI のスクリプト" "node が無い"
 fi

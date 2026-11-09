@@ -2,6 +2,7 @@
 
 `plugins/mitsuishi-dev/` を変えたら、plugin.json と marketplace.json の `version` を上げ、この先頭に 1 行足す（CI で検査）。
 
+- 2.4.4 (2026-11-09) フック skill-reminder を追加: /review・/cso・/autoplan・/qa・/design-review を呼ぶ瞬間（Skill の起動とプロンプト先頭のスラッシュコマンド）にその段の社内の決まりを 1〜2 行添え、Skill の gstack-upgrade は止める（MITSUISHI-SKILL-001）。MITSUISHI_HOOKS_OFF に skill-reminder を追加。Windows で Git・Node.js・Bun が足りないときの gstack の状態行に、足りないものだけを入れる winget の 1 行を載せる
 - 2.4.3 (2026-11-09) 上流の固定を上げる: gstack 3742ee9→b615592
 - 2.4.2 (2026-11-09) gstack の導入・毎日の更新を、git のリポジトリの外（フォルダなしを含む）で始めたときも行う（git コマンドがあれば。編集ガードは今まで通りリポジトリの中だけ）
 - 2.4.1 (2026-11-09) superpowers を上流（obra/superpowers 22f0b46、7.0.2）の写しとして plugins/superpowers/ に同梱し、相対パスで配る（外部の GitHub から別に clone する url 形式が社員の PC で入らなかったため）。固定の sha はルートの upstream-pins.json、bump-upstream は上流の version が今の写しより semver で大きいときだけ中身を丸ごと置き換える（semver の比較は scripts/lib/semver.mjs に切り出す）。禁止語の検査から上流の写しを外す。ワークフローの「更新」の記述を合わせる

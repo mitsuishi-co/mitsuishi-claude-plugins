@@ -39,7 +39,8 @@
 - **mitsuishi-dev**（自社製）
   - メイン（プランナー）と実行役（サブエージェント）の分担。モデルは別名で書き、対応表は `MODELS.md` の 1 か所
   - エージェント `executor`（実行役）・`ui-executor`（画面専用の実行役、起動時に frontend-design を読み込む）・`advisor`（相談役）・`outside-voice`（外部レビュー役）
-  - フックで止めるのは、メインのコード編集・メインによる Claude の設定とエージェント定義の編集・実行役からの再委託・advisor 以外への最上位モデルの指定だけ（下の「フックに止められたとき」）。フックは促しであり仕切りではない（Bash・PowerShell 経由の書き換え、2 行 Edit の連打、model を定義にも持たない起動は止めない）
+  - フックで止めるのは、メインのコード編集・メインによる Claude の設定とエージェント定義の編集・実行役からの再委託・advisor 以外への最上位モデルの指定・`gstack-upgrade` のスキルの起動だけ（下の「フックに止められたとき」）。フックは促しであり仕切りではない（Bash・PowerShell 経由の書き換え、2 行 Edit の連打、model を定義にも持たない起動は止めない）
+  - `/review`・`/cso`・`/autoplan`・`/qa`・`/design-review` を呼ぶ瞬間（Skill の起動・プロンプト先頭のスラッシュコマンド）に、その段の社内の決まりを 1〜2 行添える。`/gstack-upgrade` は止める（`MITSUISHI-SKILL-001`）
   - セッション開始時にワークフロー規則と `MODELS.md` と gstack の状態を注入し、どのフォルダで始めても（git があれば）gstack の導入・毎日の更新を裏で行う（セッションは待たない）
 - **superpowers**（`obra/superpowers` の固定の sha の写しを `plugins/superpowers/` に同梱し、相対パスで配る。中身は書き換えない）
   - 使うのは `test-driven-development`・`systematic-debugging`・`verification-before-completion`・`receiving-code-review` の 4 つだけ
@@ -60,6 +61,7 @@ plugins/mitsuishi-dev/
   hooks/session-start                   ルールと状態の注入、裏の gstack の導入・更新の起動
   hooks/guard-planner-edit              メインのコード編集・Claude の設定とエージェント定義の編集を止める
   hooks/guard-subagent                  再委託と最上位モデルの誤指定を止める
+  hooks/skill-reminder                  gstack の段を呼ぶときにその段の決まりを添え、gstack-upgrade を止める
   hooks/lib/common.sh                   共通関数（JSON の読み取り・git の判定・ログ・拒否文）
   hooks/lib/gstack-bg.sh                gstack の導入・更新（裏で動く。状態ファイル・ロック・打ち切り）
   hooks/lib/json-flatten.awk            JSON の読み取り（jq 不要）
@@ -80,6 +82,7 @@ plugins/superpowers/                    obra/superpowers の写し（LICENSE は
 - **`MITSUISHI-EDIT-002`**: メインが Claude の設定・エージェント定義・ガード自身・git の管理フォルダを編集しようとした。対象は、パスに `.claude/` を含む `settings*.json`／`.claude/agents/` の下（サブフォルダも）／`.claude/plugins/` の下すべて／`.claude.json`／`.mcp.json`／このプラグイン自身のフォルダの下／プラグインの `agents/` の下／パスに `/.git/` を含むもの（git のフックや設定）／長すぎて切り詰められたパス。パスは判定の前に正規化する（`\` を `/` に、`//`・`/./`・`..` をつぶす、末尾のドット・空白と `:` 以降（代替データストリーム）を落とす、大文字小文字を区別しない）。git の内外・行数・文書の例外に関係なく止める（AI が自分でガードを外したり、最上位モデルの制限を回り込んだりしないため）。利用者が手で直すか、実行役に回す
 - **`MITSUISHI-AGENT-001`**: 実行役（サブエージェント）がさらにサブエージェントを起動しようとした（再委託禁止）。実行役は自分の手で行い、分ける必要があれば「要判断」としてメインに返す
 - **`MITSUISHI-AGENT-002`**: `advisor` 以外に最上位モデルを指定した（`MODELS.md` の `TOP_ALIASES` の別名か `TOP_PREFIXES` の正式名の前方一致）。`model` を省いたときは、エージェント定義（プロジェクトの `.claude/agents/`（cwd から git のルートまで上って探す）・`~/.claude/agents/`（どちらもサブフォルダも）・`~/.claude/plugins/` の下の各プラグインの `agents/`）から frontmatter の `name:` が一致するもの（`<プラグイン>:<名前>` ならそのプラグインのもの）を探し、その `model` で判定する（YAML のコメント・引用符は取り除く）。advisor として通すのは `advisor` と `mitsuishi-dev:advisor` だけ。実行役には `opus`・`sonnet`・`haiku` を指定する
+- **`MITSUISHI-SKILL-001`**: `gstack-upgrade` のスキルを呼ぼうとした。gstack は固定の版を使い、更新はプラグインが自動で行う（下の「更新の仕組み」）。プロンプトに `/gstack-upgrade` と打ったときは止めず、「実行しない」決まりを添えるだけ
 - `MITSUISHI-FAIL-*`（ログだけ）: フックが判定できずに通した（`LIB` = 共通関数を読めない／`JSON` = 入力を読めない・文字列の中に生の改行や制御文字がある／`GIT` = git が無い・git の判定に失敗）
 
 拒否文と注入文には止め方を書いていません（AI が自分でガードを外さないため）。止める必要があると AI が判断したときは、利用者に相談するよう促します。
@@ -89,7 +92,7 @@ plugins/superpowers/                    obra/superpowers の写し（LICENSE は
 | 値 | 止まるもの |
 |---|---|
 | `1` か `all` | 全部 |
-| `planner-edit`・`subagent`・`session-start`（カンマ区切りで複数可） | そのフックだけ |
+| `planner-edit`・`subagent`・`session-start`・`skill-reminder`（カンマ区切りで複数可） | そのフックだけ |
 | 空・`0`・`false`・`no`・`off`・`none` | 止めない（全部動く） |
 | それ以外の値 | 全部（打ち間違いでも止まる側に倒す） |
 
