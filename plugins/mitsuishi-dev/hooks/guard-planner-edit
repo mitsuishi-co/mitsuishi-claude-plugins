@@ -5,6 +5,8 @@
 #                       このプラグイン自身のフォルダ（CLAUDE_PLUGIN_ROOT）の下・プラグインの agents/ の下・/.git/ を含むもの・切り詰められたパス
 #                       判定の前にパスを正規化する（lib/common.sh の norm_path。大文字小文字は区別しない）
 #   MITSUISHI-EDIT-001: メイン（プランナー）による git のリポジトリの中のコード編集を止め、実行役へ委任させる
+#   - 既定は止めない。社内の決まりが有効なセッション（/mitsuishi-dev:workflow の宣言の印 ~/.claude/mitsuishi-dev/full/<session_id>、
+#     または MITSUISHI_DEFAULT=full で /mitsuishi-dev:light の印が無い。lib/common.sh の is_full）だけが対象。EDIT-002 は印に関係なく止める
 #   - サブエージェント内（入力の最上位に agent_id がある）は通す
 #   - 文書（*.md・*.markdown、ファイル名がちょうど VERSION・CHANGELOG・TODOS か、それに .md・.txt が付いたもの）は通す。
 #     パスを切り詰めて読んだときは文書の例外に入れない
@@ -85,6 +87,9 @@ if [ "$TRUNC" != 1 ]; then
     *.md|*.markdown|version|changelog|todos|version.txt|changelog.txt|todos.txt) exit 0 ;;
   esac
 fi
+
+# ── EDIT-001 は社内の決まりを宣言したセッションだけ（印の存在確認 1 回だけ） ──
+is_full || exit 0
 
 MAXL=2; MAXB=300
 NOTE=""

@@ -6,6 +6,15 @@
 #     MITSUISHI-SKILL-001: gstack-upgrade は止める（gstack は固定の版を使う。更新はプラグインが自動で行う）
 #   UserPromptSubmit: プロンプトの先頭（前後の空白を除く）の語が上のスラッシュコマンドなら同じ文を添える
 #     （/gstack-upgrade は止めず「実行しない」決まりの文を添えるだけ）
+#   既定は社内の決まりを無効にし、段の決まりの文は出さない（gstack-upgrade の拒否と「実行しない」の文は既定でも出す）。
+#   MITSUISHI_DEFAULT=full なら既定で有効（lib/common.sh の is_full）
+#   宣言（UserPromptSubmit。session_id ごと）:
+#     入る = プロンプトの先頭の語が /mitsuishi-dev:workflow か /workflow。印 ~/.claude/mitsuishi-dev/full/<session_id> を置き
+#            （light/<session_id> は消す）、フルで回す旨・案内・MODELS.md を additionalContext で添える
+#            （SKILL.md の本文は Claude Code がスキルとして読み込むので添えない）。利用者の画面にも 1 行（systemMessage）
+#     戻る = 先頭の語が /mitsuishi-dev:light か /light。full/<session_id> を消し（既定が有効なら light/<session_id> を置き）、1 行で知らせる
+#     印を置くときに 30 日を超えた古い印を片付ける
+#     session_id が不正（[A-Za-z0-9_-] 以外・129 文字以上・空）なら切り替えずログに 1 行
 #   それ以外・壊れた入力は何も出さない。実行役（サブエージェント）の中でも区別しない。常に exit 0
 # 停止: MITSUISHI_HOOKS_OFF（1・all・skill-reminder。0・false・no・off・none は止めない。未知の値は全部止める）
 
@@ -34,6 +43,54 @@ if [ "$J_ERR" = 1 ]; then
   exit 0
 fi
 
+# emit_ctx <文> [<利用者の画面に出す 1 行>] : additionalContext（と systemMessage）を 1 行の JSON で出して終わる
+emit_ctx() {
+  local sys=""
+  if [ -n "${2:-}" ]; then json_escape "$2"; sys=",\"systemMessage\":\"$REPLY\""; fi
+  json_escape "$1"
+  printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}%s}\n' "$EVENT" "$REPLY" "$sys"
+  exit 0
+}
+
+# put_mark <フォルダ> : そのフォルダに印 <session_id> を置く（30 日を超えた古い印を片付けてから）。失敗なら 1
+put_mark() {
+  [ -d "$1" ] || mkdir -p "$1" 2>/dev/null
+  find "$1" -maxdepth 1 -type f -mmin +43200 -exec rm -f -- {} + 2>/dev/null
+  now_ts
+  printf '%s\n' "$EPOCH" >"$1/$J_SID" 2>/dev/null
+}
+
+# switch_mode <full|light> : 印を置く／消し、切り替えた旨を添えて終わる。session_id が不正なら何もせずログに 1 行（戻る）
+#   既定が無効: 宣言 = full/<id> を置く、戻す = 消す。既定が有効（MITSUISHI_DEFAULT=full）: 戻す = light/<id> を置く、宣言 = 消す
+switch_mode() {
+  if ! sid_ok; then
+    one_line "$J_SID"
+    hook_log "$HOOK" MITSUISHI-FAIL-SID - "session_id が不正のため社内の決まりを切り替えない（${REPLY:0:80}）"
+    return
+  fi
+  if [ "$1" = light ]; then
+    rm -f -- "$FULL_DIR/$J_SID" 2>/dev/null
+    if [ "$DEFAULT_FULL" = 1 ] && ! put_mark "$LIGHT_DIR"; then
+      hook_log "$HOOK" MITSUISHI-FAIL-MARK - "社内の決まりを外す印を書けない（$LIGHT_DIR）"
+      emit_ctx "社内の決まり（mitsuishi-dev）を外せなかった（印のファイルを書けない）。このセッションは社内の決まりのまま。" \
+        "社内の決まり: 外せなかった（有効のまま）"
+    fi
+    emit_ctx "このセッションは社内の決まり（mitsuishi-dev）を外した。先に入った社内の決まりの文には従わなくてよい。また使うときは /mitsuishi-dev:workflow。" \
+      "社内の決まり: 無効に戻した"
+  fi
+  rm -f -- "$LIGHT_DIR/$J_SID" 2>/dev/null
+  if ! put_mark "$FULL_DIR" && [ "$DEFAULT_FULL" != 1 ]; then
+    hook_log "$HOOK" MITSUISHI-FAIL-MARK - "社内の決まりの印を書けない（$FULL_DIR）"
+    emit_ctx "社内の決まり（mitsuishi-dev）を有効にできなかった（印のファイルを書けない）。フックの編集ガードは効かない。" \
+      "社内の決まり: 有効にできなかった"
+  fi
+  # SKILL.md の本文は Claude Code がスキルとして読み込むので、フルで回す旨・案内・MODELS.md だけを添える
+  rules_context short
+  strip_ctrl "$RULES_CTX
+</mitsuishi-dev>"
+  emit_ctx "$REPLY" "社内の決まり: 有効（/mitsuishi-dev:light で戻す）"
+}
+
 # 呼び出しの形: hook_event_name で見分ける（無ければ tool_name の有無）
 EVENT="$J_EVENT"
 [ -n "$EVENT" ] || { [ -n "$J_TOOL" ] && EVENT=PreToolUse; }
@@ -45,9 +102,17 @@ case "$EVENT" in
     RAW="${J_PROMPT#$'\xef\xbb\xbf'}"
     # 先頭の空白を除き、最初の語（空白・全角の空白・\ まで）がスラッシュコマンドのときだけ
     RAW="${RAW#"${RAW%%[![:space:]]*}"}"
-    case "$RAW" in /*) ;; *) exit 0 ;; esac
-    RAW="${RAW%%[[:space:]\\]*}"
-    RAW="${RAW%%　*}" ;;
+    case "$RAW" in
+      /*) RAW="${RAW%%[[:space:]\\]*}"; RAW="${RAW%%　*}" ;;
+      *) RAW="" ;;
+    esac
+    # 社内の決まりの切り替え（先頭のコマンドだけで判定する）
+    one_line "$RAW"; lower "$REPLY"
+    case "$REPLY" in
+      /workflow|/mitsuishi-dev:workflow) switch_mode full ;;
+      /light|/mitsuishi-dev:light) switch_mode light ;;
+    esac
+    [ -n "$RAW" ] || exit 0 ;;
   *) exit 0 ;;
 esac
 
@@ -73,6 +138,7 @@ case "$NAME" in
   *) exit 0 ;;
 esac
 
-json_escape "$MSG"
-printf '{"hookSpecificOutput":{"hookEventName":"%s","additionalContext":"%s"}}\n' "$EVENT" "$REPLY"
-exit 0
+# 段の決まりの文は社内の決まりを宣言したセッションだけ（gstack-upgrade の文は既定でも出す。印の存在確認 1 回だけ）
+[ "$NAME" = gstack-upgrade ] || is_full || exit 0
+
+emit_ctx "$MSG"

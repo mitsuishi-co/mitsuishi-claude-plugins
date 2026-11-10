@@ -26,6 +26,9 @@ TMP=$(mktemp -d 2>/dev/null || { d="${TMPDIR:-/tmp}/mhooks.$$"; mkdir -p "$d"; e
 trap 'rm -rf "$TMP" 2>/dev/null' EXIT
 export HOME="$TMP/home"; mkdir -p "$HOME"
 HLOG="$HOME/.claude/mitsuishi-dev/hooks.log"
+# 社内の決まりは既定で無効。既存のテストは session_id "t" で宣言した（/mitsuishi-dev:workflow の印がある）状態で確かめる
+FULLD="$HOME/.claude/mitsuishi-dev/full"
+mkdir -p "$FULLD"; : >"$FULLD/t"
 
 REAL_GIT=$(command -v git)
 export REAL_GIT
@@ -202,7 +205,7 @@ t "1MB の入力を 10 秒以内に判定" '[ $(( $(now) - S0 )) -le 10 ]' "$(( 
 unset BIG
 # 入力全体を一括で読む（gawk は RS = "^$"。ほかの awk は 1 行ずつ）。改行の多い入力（整形した JSON・CRLF）も同じに読む
 t "json-flatten.awk は gawk で入力を一括で読む（RS = \"^\$\"）" 'grep -q "if (\"version\" in PROCINFO) { RS = \"^\\$\"" "$HOOKS/lib/json-flatten.awk"'
-PRETTY=$(printf '{\r\n  "tool_name": "Write",\r\n  "tool_input": {\r\n    "file_path": "%s",\r\n    "content": "a\\nb\\nc"\r\n  }\r\n}\r\n' "$TS")
+PRETTY=$(printf '{\r\n  "session_id": "t",\r\n  "tool_name": "Write",\r\n  "tool_input": {\r\n    "file_path": "%s",\r\n    "content": "a\\nb\\nc"\r\n  }\r\n}\r\n' "$TS")
 check "整形した JSON（CRLF・複数行）も読めて拒否（3 行）" guard-planner-edit deny "$PRETTY"
 t "整形した JSON の行数を正しく数える" 'reason | grep -q "変更 3 行"' "$(reason)"
 if awk --version 2>/dev/null | grep -q "GNU Awk"; then
@@ -424,7 +427,7 @@ for s in qa-only plan-design-review reviewx review2 code-review ship mitsuishi-d
 done
 sr '{"hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"/review"}}'
 t "Skill 以外のツールは何も出さない" 'sr_none' "$SR_OUT"
-sr '{"tool_name":"Skill","tool_input":{"skill":"cso"}}'
+sr '{"session_id":"t","tool_name":"Skill","tool_input":{"skill":"cso"}}'
 t "hook_event_name が無くても tool_name があれば PreToolUse として扱う" 'sr_ctx PreToolUse "$CS"' "$SR_OUT"
 for bad in '{"tool_name":' '' 'not json' '{"hook_event_name":"PreToolUse","tool_name":"Skill","tool_input":{"skill":"rev
 iew"}}' '[1,2]'; do
@@ -457,7 +460,7 @@ sr "$(UP '/qa　全角の空白')"; t "プロンプトの語は全角の空白�
 sr "$(UP '/qa　全角の空白')"; t "プロンプトの語は全角の空白（生の文字）の前で切る" 'sr_ctx UserPromptSubmit "$QA"' "$SR_OUT"
 sr "$(UP '/qa\\x')"; t "プロンプトの語は \\ の前で切る" 'sr_ctx UserPromptSubmit "$QA"' "$SR_OUT"
 sr "$(UP '﻿/review')"; t "プロンプトの先頭の BOM（\\ufeff の形）を除いて判定" 'sr_ctx UserPromptSubmit "$RV"' "$SR_OUT"
-sr "$(printf '{"hook_event_name":"UserPromptSubmit","prompt":"\xef\xbb\xbf/review"}')"
+sr "$(printf '{"session_id":"t","hook_event_name":"UserPromptSubmit","prompt":"\xef\xbb\xbf/review"}')"
 t "プロンプトの先頭の BOM（生のバイト）を除いて判定" 'sr_ctx UserPromptSubmit "$RV"' "$SR_OUT"
 sr "$(UP "/gstack-upgrade")"
 t "プロンプト /gstack-upgrade は止めず「実行しない」決まりを添える" 'sr_ctx UserPromptSubmit "社内の決まり: /gstack-upgrade は実行しない。gstack は固定の版を使い、更新はプラグインが自動で行う（MITSUISHI-SKILL-001）。"' "$SR_OUT"
@@ -473,6 +476,131 @@ if command -v node >/dev/null 2>&1; then
   check "（gstack-upgrade の拒否）" skill-reminder deny "$(SK gstack-upgrade)"
   t "PreToolUse の拒否の出力は JSON として読める" 'printf "%s" "$LAST_OUT" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const j=JSON.parse(s).hookSpecificOutput;process.exit(j.hookEventName===\"PreToolUse\"&&j.permissionDecision===\"deny\"?0:1)})"' "$LAST_OUT"
 fi
+
+echo "── 社内の決まりの宣言（既定は無効・/mitsuishi-dev:workflow で有効・/light で戻す） ──"
+# 入力（session_id を変える）: WD = git の中の .ts の Write／ED2 = .claude/settings.json の Edit／SKS = Skill／UPS = プロンプト／AS = Agent
+WD()  { printf '{"session_id":"%s","hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Write","tool_input":{"file_path":"%s","content":"export const a = 1;\\n"}}' "$1" "$(jstr "$REPO")" "$TS"; }
+ED2() { printf '{"session_id":"%s","hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Edit","tool_input":{"file_path":"%s","old_string":"a","new_string":"b"}}' "$1" "$(jstr "$OUTSIDE")" "$(jstr "$OUTSIDE/.claude/settings.json")"; }
+SKS() { printf '{"session_id":"%s","hook_event_name":"PreToolUse","cwd":"%s","tool_name":"Skill","tool_input":{"skill":"%s"}}' "$2" "$(jstr "$OUTSIDE")" "$1"; }
+UPS() { printf '{"session_id":"%s","hook_event_name":"UserPromptSubmit","cwd":"%s","prompt":"%s"}' "$2" "$(jstr "$OUTSIDE")" "$1"; }
+AS()  { printf '{"session_id":"%s",%s"tool_name":"Agent","tool_input":{"description":"d","prompt":"p","subagent_type":"executor"%s}}' "$1" "$2" "${3:+,\"model\":\"$3\"}"; }
+# sr_sw <含む文字列> <systemMessage> : 1 行の JSON で、UserPromptSubmit の additionalContext と systemMessage が合い、止めていない
+sr_sw() {
+  [ "$SR_RC" = 0 ] && [ "$(printf '%s\n' "$SR_OUT" | wc -l | tr -d ' ')" = 1 ] \
+    && printf '%s' "$SR_OUT" | grep -q "^{\"hookSpecificOutput\":{\"hookEventName\":\"UserPromptSubmit\",\"additionalContext\":\"[^\"]*$1[^\"]*\"},\"systemMessage\":\"$2\"}$" \
+    && ! printf '%s' "$SR_OUT" | grep -q permissionDecision
+}
+SYS_ON="社内の決まり: 有効（/mitsuishi-dev:light で戻す）"; SYS_OFF="社内の決まり: 無効に戻した"
+LEAD="このセッションは社内の決まりで進める。依頼の作業は /autoplan → 実行役で実装 → /review →（/cso）→ /qa →（/design-review）を聞かずに最後まで回す。戻すには /mitsuishi-dev:light。"
+
+# 既定（印なし）: EDIT-001 と段の決まりの文は効かない。常に効く 4 つは止まる
+check "既定: git の中の .ts の Write は許可（EDIT-001 は効かない）" guard-planner-edit allow "$(WD d1)"
+check "既定でも Claude の設定の Edit は拒否（EDIT-002）" guard-planner-edit deny "$(ED2 d1)"
+t "既定の拒否も MITSUISHI-EDIT-002" 'reason | grep -q "^\[MITSUISHI-EDIT-002\]"' "$(reason)"
+sr "$(SKS review d1)"; t "既定: Skill review は段の決まりの文を出さない" 'sr_none' "$SR_OUT"
+sr "$(UPS /review d1)"; t "既定: プロンプト /review も文を出さない" 'sr_none' "$SR_OUT"
+check "既定でも Skill gstack-upgrade は拒否（SKILL-001）" skill-reminder deny "$(SKS gstack-upgrade d1)"
+sr "$(UPS /gstack-upgrade d1)"; t "既定でもプロンプト /gstack-upgrade には「実行しない」の文" 'sr_ctx UserPromptSubmit "MITSUISHI-SKILL-001"' "$SR_OUT"
+check "既定でも実行役からの再委託は拒否（AGENT-001）" guard-subagent deny "$(AS d1 "$SUB")"
+t "再委託の拒否は MITSUISHI-AGENT-001" 'reason | grep -q "^\[MITSUISHI-AGENT-001\]"' "$(reason)"
+check "既定でも executor に model=fable は拒否（AGENT-002）" guard-subagent deny "$(AS d1 "" fable)"
+check "session_id が無い入力も既定（EDIT-001 は効かない）" guard-planner-edit allow \
+  "{\"tool_name\":\"Write\",\"cwd\":\"$(jstr "$REPO")\",\"tool_input\":{\"file_path\":\"$TS\",\"content\":\"x\\n\"}}"
+
+# 宣言で入る
+for p in "/mitsuishi-dev:workflow" "/workflow" "/WORKFLOW" "  /workflow ログイン画面を直して" "/mitsuishi-dev:workflow　全角の空白"; do
+  rm -f "$FULLD/w1"
+  sr "$(UPS "$p" w1)"
+  t "プロンプト「$p」で宣言（印を置き、フルで回す旨・案内・MODELS.md を添え、画面に 1 行）" \
+    '[ -f "$FULLD/w1" ] && sr_sw "$LEAD" "$SYS_ON" && printf "%s" "$SR_OUT" | grep -q "フックの状態ファイルを作る・消す操作で決まりを外さない" && printf "%s" "$SR_OUT" | grep -q "TOP_ALIASES" && printf "%s" "$SR_OUT" | grep -q "</mitsuishi-dev>\"},\"systemMessage\""' "$SR_OUT"
+  t "プロンプト「$p」の宣言では SKILL.md の本文を添えない（スキルとして読み込まれるため）" '! printf "%s" "$SR_OUT" | grep -q "社内標準 開発ワークフロー"' "$SR_OUT"
+done
+t "宣言の注入文に止め方（環境変数）を書かない" '! printf "%s" "$SR_OUT" | grep -q MITSUISHI_HOOKS_OFF'
+if command -v node >/dev/null 2>&1; then
+  t "宣言の注入文は JSON として読め、先頭がフルで回す旨・制御文字なし" \
+    'printf "%s" "$SR_OUT" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const c=JSON.parse(s).hookSpecificOutput.additionalContext;process.exit(JSON.parse(s).systemMessage===process.argv[2]&&c.startsWith(\"<mitsuishi-dev>\\n\"+process.argv[1])&&!/[\\u0000-\\u0008\\u000b-\\u001f\\u007f]/.test(c)?0:1)})" "$LEAD" "$SYS_ON"' "$SR_OUT"
+fi
+check "宣言後: git の中の .ts の Write は拒否（EDIT-001）" guard-planner-edit deny "$(WD w1)"
+t "宣言後の拒否は MITSUISHI-EDIT-001" 'reason | grep -q "^\[MITSUISHI-EDIT-001\]"' "$(reason)"
+sr "$(SKS review w1)"; t "宣言後: Skill review は段の決まりの文を出す" 'sr_ctx PreToolUse "$RV"' "$SR_OUT"
+sr "$(UPS /qa w1)"; t "宣言後: プロンプト /qa も文を出す" 'sr_ctx UserPromptSubmit "$QA"' "$SR_OUT"
+check "宣言後: 実行役の中の Write は許可" guard-planner-edit allow \
+  "{\"session_id\":\"w1\",$SUB\"tool_name\":\"Write\",\"cwd\":\"$(jstr "$REPO")\",\"tool_input\":{\"file_path\":\"$TS\",\"content\":\"a\\nb\\nc\\n\"}}"
+check "別の session_id には効かない（EDIT-001 は効かない）" guard-planner-edit allow "$(WD d2)"
+sr "$(SKS review d2)"; t "別の session_id には段の決まりの文を出さない" 'sr_none' "$SR_OUT"
+
+# 宣言にならないもの（先頭のコマンドだけで判定する）
+for p in "workflow で進めて" "/workflows" "/other:workflow" "/mitsuishi-dev:workflow2" "軽量モードで" "/full" "社内の決まりで /workflow"; do
+  sr "$(UPS "$p" n1)"; t "プロンプト「$p」では宣言しない" 'sr_none && [ ! -e "$FULLD/n1" ]' "$SR_OUT"
+done
+sr "$(UPS /workflow n2)" MITSUISHI_HOOKS_OFF=skill-reminder
+t "MITSUISHI_HOOKS_OFF=skill-reminder では宣言しない" 'sr_none && [ ! -e "$FULLD/n2" ]' "$SR_OUT"
+
+# /light で戻す
+for p in "/mitsuishi-dev:light" "/light" " /LIGHT ありがとう"; do
+  : >"$FULLD/w1"
+  sr "$(UPS "$p" w1)"
+  t "プロンプト「$p」で戻す（印を消し 1 行で知らせ、画面にも 1 行）" '[ ! -e "$FULLD/w1" ] && sr_sw "社内の決まり（mitsuishi-dev）を外した。" "$SYS_OFF"' "$SR_OUT"
+done
+check "戻した後: .ts の Write は許可" guard-planner-edit allow "$(WD w1)"
+sr "$(SKS review w1)"; t "戻した後: 段の決まりの文を出さない" 'sr_none' "$SR_OUT"
+sr "$(UPS /light w9)"; t "宣言していないセッションの /light も 1 行で知らせるだけ" 'sr_sw "を外した。" "$SYS_OFF" && [ ! -e "$FULLD/w9" ] && [ ! -e "$HOME/.claude/mitsuishi-dev/light/w9" ]' "$SR_OUT"
+
+# 壊れた・危険な session_id では何もしない（ログに 1 行）
+mkdir -p "$HOME/.claude/mitsuishi-dev"; : >"$HOME/.claude/mitsuishi-dev/x"; : >"$FULLD/a"
+L129=$(rep a 129)
+for sid in "../x" "a/b" "a b" "" "$L129" '\\u002e\\u002e' "a.b" ".."; do
+  sr "$(UPS /mitsuishi-dev:workflow "$sid")"
+  t "危険な session_id「${sid:0:20}」では宣言しない（ログに 1 行）" \
+    'sr_none && tail -n 1 "$HLOG" | grep -q "skill-reminder	MITSUISHI-FAIL-SID" && [ -z "$(ls -A "$FULLD" | grep -vx t | grep -vx a)" ]' "$SR_OUT $(ls -A "$FULLD")"
+done
+check "session_id ../x は ~/.claude/mitsuishi-dev/x があっても既定（EDIT-001 は効かない）" guard-planner-edit allow "$(WD ../x)"
+sr "$(SKS review ../x)"; t "session_id ../x では段の決まりの文を出さない" 'sr_none' "$SR_OUT"
+check "session_id a/b（full/a がある）も既定" guard-planner-edit allow "$(WD a/b)"
+rm -f "$FULLD/a" "$HOME/.claude/mitsuishi-dev/x"
+L128=$(rep a 128)
+sr "$(UPS /workflow "$L128")"; t "128 文字の session_id は宣言できる" '[ -f "$FULLD/$L128" ] && sr_sw "$LEAD" "$SYS_ON"' "$SR_OUT"
+rm -f "$FULLD/$L128"
+
+# 印を置くときに 30 日を超えた古い印を片付ける
+: >"$FULLD/old1"; : >"$FULLD/new1"
+if touch -d '31 days ago' "$FULLD/old1" 2>/dev/null && touch -d '29 days ago' "$FULLD/new1" 2>/dev/null; then
+  sr "$(UPS /workflow w2)"
+  t "宣言のときに 30 日を超えた印を消し、30 日以内の印は残す" '[ ! -e "$FULLD/old1" ] && [ -e "$FULLD/new1" ] && [ -e "$FULLD/w2" ] && [ -e "$FULLD/t" ]' "$(ls -A "$FULLD")"
+else
+  skip "古い印の片付け" "touch -d が使えない"
+fi
+rm -f "$FULLD/old1" "$FULLD/new1" "$FULLD/w2" "$FULLD/w1"
+
+# 管理者の既定の反転（MITSUISHI_DEFAULT=full: 印が無くても有効。/light で light/<id> を置いて外す）
+LIGHTD="$HOME/.claude/mitsuishi-dev/light"
+check "既定が有効: 印の無いセッションの .ts の Write は拒否（EDIT-001）" guard-planner-edit deny "$(WD f1)" MITSUISHI_DEFAULT=full
+check "MITSUISHI_DEFAULT=' Full '（空白・大文字）も既定が有効" guard-planner-edit deny "$(WD f1)" "MITSUISHI_DEFAULT= Full "
+sr "$(SKS review f1)" MITSUISHI_DEFAULT=full; t "既定が有効: 段の決まりの文を出す" 'sr_ctx PreToolUse "$RV"' "$SR_OUT"
+for v in yes 1 on fullx ""; do
+  check "MITSUISHI_DEFAULT='$v' は既定で無効のまま" guard-planner-edit allow "$(WD f1)" "MITSUISHI_DEFAULT=$v"
+done
+sr "$(UPS /mitsuishi-dev:light f1)" MITSUISHI_DEFAULT=full
+t "既定が有効: /light で light/<id> を置き、画面に 1 行" '[ -f "$LIGHTD/f1" ] && sr_sw "を外した。" "$SYS_OFF"' "$SR_OUT"
+check "既定が有効でも、外したセッションの Write は許可" guard-planner-edit allow "$(WD f1)" MITSUISHI_DEFAULT=full
+sr "$(SKS review f1)" MITSUISHI_DEFAULT=full; t "既定が有効でも、外したセッションには段の決まりの文を出さない" 'sr_none' "$SR_OUT"
+check "既定が有効で外したセッションでも EDIT-002 は拒否" guard-planner-edit deny "$(ED2 f1)" MITSUISHI_DEFAULT=full
+check "既定が有効: 別の session_id は有効のまま" guard-planner-edit deny "$(WD f2)" MITSUISHI_DEFAULT=full
+sr "$(UPS /mitsuishi-dev:workflow f1)" MITSUISHI_DEFAULT=full
+t "既定が有効: 宣言で light/<id> を消して戻す" '[ ! -e "$LIGHTD/f1" ] && sr_sw "$LEAD" "$SYS_ON"' "$SR_OUT"
+check "既定が有効: 宣言し直した後は拒否" guard-planner-edit deny "$(WD f1)" MITSUISHI_DEFAULT=full
+check "既定が有効: 危険な session_id では既定（有効）のまま" guard-planner-edit deny "$(WD ../x)" MITSUISHI_DEFAULT=full
+: >"$LIGHTD/f3"
+check "既定が無効なら light/<id> は見ない（宣言の印が無ければ許可）" guard-planner-edit allow "$(WD f3)"
+rm -rf "$LIGHTD" "$FULLD/f1"
+
+# スキル: workflow と light は利用者だけが呼ぶ。full は作らない
+SKD="$CLAUDE_PLUGIN_ROOT/skills"
+for s in workflow light; do
+  t "スキル $s は disable-model-invocation: true" 'awk "NR==1{next} /^---/{exit} {print}" "$SKD/$s/SKILL.md" | tr -d "\r" | grep -qx "disable-model-invocation: true"'
+done
+t "skills/full は無い" '[ ! -e "$SKD/full" ]'
+t "workflow の description に「必ずこのスキルに従うこと」が無い" '! grep -q "必ずこのスキルに従うこと" "$SKD/workflow/SKILL.md"'
 
 echo "── gstack-bg: 足りない道具の状態行 ──"
 # bgs <Windows か 0|1> <無いもの（空白区切り）> : gstack-bg.sh を読み、have と is_windows を差し替えて bg_status の BG_STATUS を BGS に
@@ -580,6 +708,7 @@ fresh() {
   export FAKE_LOG="$SH/fake"; mkdir -p "$FAKE_LOG"
   printf 'telemetry=off\n' >"$FAKE_LOG/cfg"
   GD="$SH/gs"; SD="$SH/.claude/mitsuishi-dev"
+  mkdir -p "$SD/full"; : >"$SD/full/t"   # 宣言した状態（既定の注入は別に確かめる）
 }
 # ss [環境変数=値 ...] : session-start を走らせて SS_OUT に。cwd は SS_CWD（既定は git の中）
 ss() {
@@ -838,6 +967,9 @@ else
   SS_OUT=$(printf '{"cwd":"%s"}' "$(jstr "$REPO")" | env HOME="$SH" PATH="$NOGIT_PATH" bash "$HOOKS/session-start" 2>&1)
   t "git が無い: 状態行は「編集ガード無効（git なし）」" 'ctx_has "編集ガード無効（git なし）"' "$SS_OUT"
   t "git が無い: 利用者向けの 1 行（systemMessage）で Git を入れるよう伝える" 'ctx_has "\"systemMessage\": \"Git が見つからない"' "$SS_OUT"
+  SS_OUT=$(printf '{"session_id":"t","source":"compact","cwd":"%s"}' "$(jstr "$REPO")" | env HOME="$SH" PATH="$NOGIT_PATH" bash "$HOOKS/session-start" 2>&1)
+  t "compact で有効のままかつ git が無い: systemMessage は 2 行を改行でつなぐ" \
+    'ctx_has "\"systemMessage\": \"社内の決まり: 有効（/mitsuishi-dev:light で戻す）\\\\nGit が見つからない"' "$SS_OUT"
 fi
 ss MITSUISHI_HOOKS_OFF=session-start
 t "MITSUISHI_HOOKS_OFF=session-start: 何も出さない" '[ -z "$SS_OUT" ]' "$SS_OUT"
@@ -849,13 +981,42 @@ t "MITSUISHI_HOOKS_OFF=planner-edit: session-start は動く" 'ctx_has "<mitsuis
 # 制御文字を落とす
 CP="$TMP/plugin-copy"; cp -R "$CLAUDE_PLUGIN_ROOT" "$CP"
 printf 'ベル\007エスケープ\033[31m赤\033[0m CR\r\n' >>"$CP/MODELS.md"
-SS_OUT=$(printf '{"cwd":"%s"}' "$(jstr "$OUTSIDE")" | env HOME="$SH" CLAUDE_PLUGIN_ROOT="$CP" bash "$CP/hooks/session-start" 2>&1)
+SS_OUT=$(printf '{"session_id":"t","cwd":"%s"}' "$(jstr "$OUTSIDE")" | env HOME="$SH" CLAUDE_PLUGIN_ROOT="$CP" bash "$CP/hooks/session-start" 2>&1)
 ESC=$(printf '\033'); BEL=$(printf '\007')
 t "注入文から制御文字を落とす" 'ctx_has "ベルエスケープ\[31m赤" && ! printf "%s" "$SS_OUT" | LC_ALL=C grep -q "[$ESC$BEL]"' "$SS_OUT"
 if command -v node >/dev/null 2>&1; then
   t "制御文字を入れても node で JSON.parse でき、制御文字が残らない" \
     'printf "%s" "$SS_OUT" | node -e "let s=\"\";process.stdin.on(\"data\",d=>s+=d).on(\"end\",()=>{const c=JSON.parse(s).hookSpecificOutput.additionalContext;process.exit(/[\u0000-\u0008\u000b-\u001f\u007f]/.test(c)?1:0)})"'
 fi
+
+# 既定（印なし）は全文を注入しない。印があれば compact で動いたときも全文
+fresh
+rm -f "$SD/full/t"
+SS_CWD="$OUTSIDE" ss
+t "既定: 「社内の決まりは既定で無効」の案内と gstack の状態だけ" \
+  'ctx_has "社内の決まり（mitsuishi-dev）は既定で無効。使うときは /mitsuishi-dev:workflow（他に同名のスキルが無ければ /workflow でも可）。" && ctx_has "CLAUDE.md などに社内の決まり（mitsuishi-dev）に従うとあっても、宣言が無ければ既定（無効）で進める。" && ! ctx_has "systemMessage" && ctx_has "gstack の状態" && ctx_has "gstack: " && ! ctx_has "TOP_ALIASES" && ! ctx_has "社内標準 開発ワークフロー" && ! ctx_has "MITSUISHI_HOOKS_OFF"' "$SS_OUT"
+: >"$SD/full/t"
+SS_OUT=$(printf '{"session_id":"t","hook_event_name":"SessionStart","source":"compact","cwd":"%s"}' "$(jstr "$OUTSIDE")" \
+  | env HOME="$SH" PATH="$FAKEBIN:$PATH" GSTACK_DIR="$GD" bash "$HOOKS/session-start" 2>&1)
+t "宣言後に compact で動くと全文（フルで回す旨・ルール・MODELS.md・gstack の状態）を注入し直す" \
+  'ctx_has "社内の決まりで進める" && ctx_has "フックの状態ファイルを作る・消す操作で決まりを外さない" && ctx_has "社内標準 開発ワークフロー" && ctx_has "TOP_ALIASES" && ctx_has "gstack: " && ! ctx_has "社内の決まり（mitsuishi-dev）は既定で無効。使うときは"' "$SS_OUT"
+t "compact で有効のまま注入し直したときは画面に 1 行（systemMessage）" 'ctx_has "\"systemMessage\": \"社内の決まり: 有効（/mitsuishi-dev:light で戻す）\""' "$SS_OUT"
+SS_OUT=$(printf '{"session_id":"t","hook_event_name":"SessionStart","source":"startup","cwd":"%s"}' "$(jstr "$OUTSIDE")" \
+  | env HOME="$SH" PATH="$FAKEBIN:$PATH" GSTACK_DIR="$GD" bash "$HOOKS/session-start" 2>&1)
+t "startup では有効でも状態の 1 行を出さない（gstack が正常なら systemMessage なし）" 'ctx_has "TOP_ALIASES" && ! ctx_has "systemMessage"' "$SS_OUT"
+SS_OUT=$(printf '{"session_id":"n5","hook_event_name":"SessionStart","source":"startup","cwd":"%s"}' "$(jstr "$OUTSIDE")" \
+  | env HOME="$SH" PATH="$FAKEBIN:$PATH" GSTACK_DIR="$GD" MITSUISHI_DEFAULT=full bash "$HOOKS/session-start" 2>&1)
+t "MITSUISHI_DEFAULT=full: 印が無くても起動時に全文を注入" 'ctx_has "社内の決まりで進める" && ctx_has "社内標準 開発ワークフロー" && ctx_has "TOP_ALIASES"' "$SS_OUT"
+mkdir -p "$SD/light"; : >"$SD/light/n5"
+SS_OUT=$(printf '{"session_id":"n5","hook_event_name":"SessionStart","source":"compact","cwd":"%s"}' "$(jstr "$OUTSIDE")" \
+  | env HOME="$SH" PATH="$FAKEBIN:$PATH" GSTACK_DIR="$GD" MITSUISHI_DEFAULT=full bash "$HOOKS/session-start" 2>&1)
+t "MITSUISHI_DEFAULT=full で外したセッションは「外している」の案内だけ" 'ctx_has "このセッションでは社内の決まり（mitsuishi-dev）を外している。" && ! ctx_has "TOP_ALIASES" && ! ctx_has "systemMessage"' "$SS_OUT"
+SS_OUT=$(printf '{"session_id":"other","hook_event_name":"SessionStart","source":"clear","cwd":"%s"}' "$(jstr "$OUTSIDE")" \
+  | env HOME="$SH" PATH="$FAKEBIN:$PATH" GSTACK_DIR="$GD" bash "$HOOKS/session-start" 2>&1)
+t "印の無い別の session_id（clear で変わった後）は既定の注入" 'ctx_has "既定で無効" && ! ctx_has "TOP_ALIASES"' "$SS_OUT"
+SS_OUT=$(printf '{"session_id":"../full/t","hook_event_name":"SessionStart","cwd":"%s"}' "$(jstr "$OUTSIDE")" \
+  | env HOME="$SH" PATH="$FAKEBIN:$PATH" GSTACK_DIR="$GD" bash "$HOOKS/session-start" 2>&1)
+t "危険な session_id では既定の注入" 'ctx_has "既定で無効" && ! ctx_has "TOP_ALIASES"' "$SS_OUT"
 
 echo "── CI のスクリプト ──"
 if command -v node >/dev/null 2>&1; then

@@ -11,6 +11,13 @@ esac
 PLUGIN_ROOT="${CLAUDE_PLUGIN_ROOT:-$HOOK_LIB_DIR/../..}"
 MITSUISHI_STATE_DIR="$HOME/.claude/mitsuishi-dev"
 HOOKS_LOG="$MITSUISHI_STATE_DIR/hooks.log"
+FULL_DIR="$MITSUISHI_STATE_DIR/full"     # 社内の決まりを宣言したセッションの印（/mitsuishi-dev:workflow。session_id ごとに 1 ファイル）
+LIGHT_DIR="$MITSUISHI_STATE_DIR/light"   # 既定が有効（MITSUISHI_DEFAULT=full）のとき、/mitsuishi-dev:light で外したセッションの印
+# MITSUISHI_DEFAULT（管理者が管理設定の env で入れる）: full なら印が無くても既定で有効。それ以外・未設定は既定で無効。外部コマンドを使わない
+DEFAULT_FULL=0
+_md="${MITSUISHI_DEFAULT:-}"; _md="${_md//[[:space:]]/}"
+case "$_md" in [Ff][Uu][Ll][Ll]) DEFAULT_FULL=1 ;; esac
+unset _md
 README_URL="https://github.com/mitsuishi-co/mitsuishi-claude-plugins#フックに止められたとき"
 HAS_PRINTF_TIME=0
 [ "${BASH_VERSINFO[0]:-3}" -gt 4 ] || { [ "${BASH_VERSINFO[0]:-3}" -eq 4 ] && [ "${BASH_VERSINFO[1]:-0}" -ge 2 ]; } && HAS_PRINTF_TIME=1
@@ -56,11 +63,12 @@ json_escape() {
 #   Edit: J_OLD_L・J_OLD_B・J_NEW_L・J_NEW_B・J_REPLACE_ALL／Write: J_CONTENT_L／NotebookEdit: J_SRC_L
 #   MultiEdit: J_EDITS_SEEN・J_EDITS_BAD（replace_all あり）・J_EDITS_L・J_EDITS_B（各 edit の多い方の合計）
 #   Agent: J_TYPE・J_MODEL／Skill: J_SKILL／J_EVENT（hook_event_name）・J_PROMPT（UserPromptSubmit。512 文字まで）
+#   J_SID・J_SID_TR（session_id と切り詰め）・J_SOURCE（SessionStart の source）
 read_input() {
   local flat k l b tr v idx
   local -a el eb
   J_ERR=0; J_TOOL=; J_AGENT_ID=; J_AGENT_TYPE=; J_CWD=; J_FILE=; J_FILE_TR=0; J_NB=; J_NB_TR=0
-  J_SKILL=; J_EVENT=; J_PROMPT=
+  J_SKILL=; J_EVENT=; J_PROMPT=; J_SID=; J_SID_TR=0; J_SOURCE=
   J_OLD_L=0; J_OLD_B=0; J_NEW_L=0; J_NEW_B=0; J_REPLACE_ALL=; J_CONTENT_L=0; J_SRC_L=0
   J_EDITS_SEEN=0; J_EDITS_BAD=0; J_EDITS_L=0; J_EDITS_B=0; J_TYPE=; J_MODEL=
   flat=$(LC_ALL=C awk -f "$HOOK_LIB_DIR/json-flatten.awk") || { J_ERR=1; return; }
@@ -83,6 +91,8 @@ read_input() {
       tool_input.skill) J_SKILL=$v ;;
       hook_event_name) J_EVENT=$v ;;
       prompt) J_PROMPT=$v ;;
+      session_id) J_SID=$v; J_SID_TR=$tr ;;
+      source) J_SOURCE=$v ;;
       tool_input.edits\[*)
         J_EDITS_SEEN=1
         idx="${k#tool_input.edits\[}"; idx="${idx%%\]*}"
@@ -98,6 +108,59 @@ read_input() {
   done <<<"$flat"
   for v in "${el[@]}"; do J_EDITS_L=$((J_EDITS_L + v)); done
   for v in "${eb[@]}"; do J_EDITS_B=$((J_EDITS_B + v)); done
+}
+
+# sid_ok : 入力の session_id が印のファイル名に使える形（[A-Za-z0-9_-] だけ・1〜128 文字・切り詰めなし）なら 0
+sid_ok() {
+  case "$J_SID" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
+  [ "${#J_SID}" -le 128 ] && [ "$J_SID_TR" != 1 ]
+}
+
+# is_full : このセッションで社内の決まりが有効なら 0。外部コマンドを使わず、ファイルの存在確認 1 回だけ
+#   既定が無効（MITSUISHI_DEFAULT が full 以外）: 宣言の印 full/<session_id> があれば有効
+#   既定が有効（MITSUISHI_DEFAULT=full）: 外した印 light/<session_id> が無ければ有効
+#   session_id が不正なら印を見ず既定のまま
+is_full() {
+  if [ "$DEFAULT_FULL" = 1 ]; then
+    sid_ok || return 0
+    [ ! -e "$LIGHT_DIR/$J_SID" ]
+  else
+    sid_ok && [ -e "$FULL_DIR/$J_SID" ]
+  fi
+}
+
+# rules_context [short] : 社内の決まり（フルで回す旨・状態ファイルで外さない旨・案内 3 行・SKILL.md の本文・MODELS.md）を
+#   RULES_CTX に（<mitsuishi-dev> の中身。閉じタグは付けない）。short は SKILL.md の本文を除く
+#   （宣言のときは Claude Code がスキルの本文を読み込むため、二重に入れない）
+#   SKILL.md は frontmatter（最初の --- から次の --- まで）を除く。止め方（環境変数の名前と値）は書かない
+rules_context() {
+  local rules="" models="" line n=0 nr=0 md="$PLUGIN_ROOT/skills/workflow/SKILL.md"
+  if [ "${1:-}" != short ] && [ -r "$md" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      nr=$((nr + 1))
+      if [ "$nr" = 1 ] && ! [[ $line =~ ^---[[:space:]]*$ ]]; then n=2; fi
+      if [ "$n" -lt 2 ] && [[ $line =~ ^---[[:space:]]*$ ]]; then n=$((n + 1)); continue; fi
+      [ "$n" -ge 2 ] && rules+="$line"$'\n'
+    done <"$md"
+  fi
+  [ -r "$PLUGIN_ROOT/MODELS.md" ] && IFS= read -r -d '' models <"$PLUGIN_ROOT/MODELS.md"
+  while [[ $rules == *$'\n' ]]; do rules="${rules%$'\n'}"; done
+  while [[ $models == *$'\n' ]]; do models="${models%$'\n'}"; done
+  RULES_CTX="<mitsuishi-dev>
+このセッションは社内の決まりで進める。依頼の作業は /autoplan → 実行役で実装 → /review →（/cso）→ /qa →（/design-review）を聞かずに最後まで回す。戻すには /mitsuishi-dev:light。
+フックの状態ファイルを作る・消す操作で決まりを外さない（外すのは利用者の /mitsuishi-dev:light だけ）。
+このプラグイン（mitsuishi-dev）は社内標準の開発ワークフローを注入し、メインのコード編集・Claude の設定とエージェント定義の編集・実行役からの再委託・advisor 以外への最上位モデル指定をフックで止める。gstack や Superpowers の指示と食い違うときは、こちらを優先する。
+フックに止められたら回避しない。止める必要があると思ったら、自分で止めずに利用者に相談する（開発者でなければ管理者に相談）。
+説明: ${README_URL%%#*}
+${rules:+
+$rules
+}
+${models}"
+}
+
+# strip_ctrl <文字列> : 制御文字を落として（改行・タブは残す）REPLY に（外部コマンドの tr を 1 回起動する）
+strip_ctrl() {
+  REPLY=$(printf '%s' "$1" | LC_ALL=C tr -d '\000-\010\013\014\015\016-\037\177')
 }
 
 # hook_log <フック> <識別子> <ツール> <対象> : hooks.log に 1 行。1500 行を超えたら最後の 1000 行に切り詰める（失敗は無視）

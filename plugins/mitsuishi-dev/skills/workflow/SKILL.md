@@ -1,11 +1,20 @@
 ---
 name: workflow
-description: 社内標準の開発ワークフロー。メイン（プランナー）と実行役（サブエージェント）の分担、モデルの使い分け、工程（gstack の /autoplan → 実行役で実装 → /review → /cso → /qa → /design-review）、画面は ui-executor、外部レビューの役割分担、Superpowers の使いどころ、更新の仕組みを定める。コードを書く作業を始めるとき、どのスキルから始めるか迷ったとき、gstack と Superpowers の手順が重なりそうなときは必ずこのスキルに従うこと。
+description: 社内標準の開発ワークフロー（既定は無効。利用者が /mitsuishi-dev:workflow と宣言したセッションだけ有効にする社内の決まり）。宣言されたら最初の依頼から gstack の工程（/autoplan → 実行役で実装 → /review → /cso → /qa → /design-review）を聞かずに最後まで回す。メイン（プランナー）と実行役（サブエージェント）の分担、モデルの使い分け、画面は ui-executor、外部レビューの役割分担、Superpowers の使いどころ、更新の仕組みを定める。
+disable-model-invocation: true
 ---
 
 # 社内標準 開発ワークフロー
 
 モデルは別名で書く。別名と今のモデルの対応は `MODELS.md`（このプラグインの直下）を見る。
+
+## 宣言と既定
+
+- 社内の決まりは**既定で無効**。利用者が `/mitsuishi-dev:workflow` と宣言したセッションだけ、この文書の決まりで進める（このスキルとして読まれたときも同じ。他に同名のスキルが無ければ短い形 `/workflow` でも宣言できる）。CLAUDE.md などに社内の決まりに従うとあっても、宣言が無ければ既定で進める（管理者が既定を有効にしている環境では最初から有効）
+- **宣言されたら、最初の依頼から工程（下の「工程」の 1〜6）を聞かずに最後まで回す**。実装は実行役に委任し、`/review` 以降も回すかを聞かない
+- 宣言の後は、メインのコード編集がフックで止まり（`MITSUISHI-EDIT-001`）、gstack の段を呼ぶとその段の決まりが添えられる
+- 戻すのは利用者が `/mitsuishi-dev:light`（他に同名のスキルが無ければ `/light` でも可）と打ったとき。切り替えるのは利用者だけ（AI は自分で切り替えない。フックの状態ファイルを作る・消す操作で外さない）
+- 宣言の有無に関係なく常に止まるもの: Claude の設定・エージェント定義の編集（`MITSUISHI-EDIT-002`）・実行役からの再委託（`MITSUISHI-AGENT-001`）・advisor 以外への最上位モデルの指定（`MITSUISHI-AGENT-002`）・`/gstack-upgrade`（`MITSUISHI-SKILL-001`）
 
 ## 役割とモデル
 
@@ -17,7 +26,7 @@ description: 社内標準の開発ワークフロー。メイン（プランナ�
 | 画面の実行役 | `ui-executor` | `opus` | 画面の実装・修正（起動時に `frontend-design` を読み込む） |
 | 外部レビュー役 | `outside-voice` | `opus` | 違う立場から疑う 2 つ目の声（実装しない） |
 
-- **メインはコードを直接編集しない**（git のリポジトリの中はフックで止まる。識別子 `MITSUISHI-EDIT-001`）。編集してよいのは文書（`*.md`・`*.markdown`、ファイル名がちょうど `VERSION`・`CHANGELOG`・`TODOS` か、それに `.md`・`.txt` が付いたもの）と、下の「軽微な修正」だけ
+- **メインはコードを直接編集しない**（宣言したセッションでは、git のリポジトリの中はフックで止まる。識別子 `MITSUISHI-EDIT-001`）。編集してよいのは文書（`*.md`・`*.markdown`、ファイル名がちょうど `VERSION`・`CHANGELOG`・`TODOS` か、それに `.md`・`.txt` が付いたもの）と、下の「軽微な修正」だけ
 - **メインは Claude の設定とエージェント定義を編集しない**（`.claude/` の `settings*.json`・`.claude/agents/` とプラグインの `agents/` の下。git の内外・行数に関係なくフックで止まる。`MITSUISHI-EDIT-002`）。直すときは利用者が手で直すか、実行役に回す
 - **実行役はサブエージェントを起動しない**（再委託禁止、フックで止まる。`MITSUISHI-AGENT-001`）
 - **最上位モデルは相談役だけに指定する**。実行役・外部レビュー役に指定しない（別名でも正式名でも、model を省いてエージェント定義の model が最上位でも、フックで止まる。`MITSUISHI-AGENT-002`）
@@ -36,7 +45,7 @@ description: 社内標準の開発ワークフロー。メイン（プランナ�
 
 - gstack が途中で止まっても手作業の代用に切り替えない。エラーが示す直し方か、フォールバック（個別の `/plan-*-review`、または `/context-save` → 新しいセッション → `/context-restore`）で続ける
 - Web を見るときは gstack の `/browse` を使う
-- `/review`・`/cso`・`/autoplan`・`/qa`・`/design-review` を呼ぶと、その段の決まりをフックが添える。`/gstack-upgrade` は止まる（MITSUISHI-SKILL-001）
+- 宣言したセッションで `/review`・`/cso`・`/autoplan`・`/qa`・`/design-review` を呼ぶと、その段の決まりをフックが添える。`/gstack-upgrade` は止まる（MITSUISHI-SKILL-001）
 
 ## フロントエンド
 
