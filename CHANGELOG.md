@@ -2,6 +2,7 @@
 
 `plugins/mitsuishi-dev/` を変えたら、plugin.json と marketplace.json の `version` を上げ、この先頭に 1 行足す（CI で検査）。
 
+- 2.4.5 (2026-11-10) 上流の固定を上げる: gstack b615592→b1702ee
 - 2.4.4 (2026-11-09) フック skill-reminder を追加: /review・/cso・/autoplan・/qa・/design-review を呼ぶ瞬間（Skill の起動とプロンプト先頭のスラッシュコマンド）にその段の社内の決まりを 1〜2 行添え、Skill の gstack-upgrade は止める（MITSUISHI-SKILL-001）。MITSUISHI_HOOKS_OFF に skill-reminder を追加。Windows で Git・Node.js・Bun が足りないときの gstack の状態行に、足りないものだけを入れる winget の 1 行を載せる
 - 2.4.3 (2026-11-09) 上流の固定を上げる: gstack 3742ee9→b615592
 - 2.4.2 (2026-11-09) gstack の導入・毎日の更新を、git のリポジトリの外（フォルダなしを含む）で始めたときも行う（git コマンドがあれば。編集ガードは今まで通りリポジトリの中だけ）
