@@ -4,6 +4,23 @@
 **このリポジトリは公開です**（中身は社内ルールだけで秘密を含まず、公開にすることで社員側の認証設定を不要にしています）。個人名・社内システムの情報・秘密は書かないでください。
 仕様の正本は `DECISIONS.md`、変更の記録は `CHANGELOG.md` です。
 
+## 使い方（利用者）
+
+- **社内の決まりは既定で無効**です（2.5.0 から）。何も言わなければ、メインが直接コードを直してよく、実行役への委譲や gstack の工程も省いて進みます。セッション開始時に入るのは「既定で無効」の案内と gstack の状態の数行だけです
+- **CLAUDE.md に「mitsuishi-dev の決まりに従う」と書いている人は、「宣言したとき（`/mitsuishi-dev:workflow`）だけ従う」に直してください**（宣言が無ければ、CLAUDE.md にあっても既定〔無効〕で進みます）
+- **社内の決まりで進めたいときは、プロンプトの先頭に `/mitsuishi-dev:workflow` と打ちます**（宣言。他に同名のスキルが無ければ短い形 `/workflow` でも可）。そのセッションだけ社内の決まりが入り、依頼の作業を `/autoplan` → 実行役で実装 → `/review` →（`/cso`）→ `/qa` →（`/design-review`）まで聞かずに回します。メインのコード編集は `MITSUISHI-EDIT-001` で止まり、gstack の段を呼ぶとその段の決まりが添えられます。画面に「社内の決まり: 有効（/mitsuishi-dev:light で戻す）」と 1 行出ます。会話の要約（compact）の後も続きます
+- **戻すときは `/mitsuishi-dev:light`**（他に同名のスキルが無ければ `/light` でも可）と打ちます。画面に「社内の決まり: 無効に戻した」と出ます。切り替えはプロンプトの先頭のコマンドだけで判定します（文中の語では切り替えません）
+- 宣言の有無に関係なく常に止まるもの: Claude の設定・エージェント定義の編集（`MITSUISHI-EDIT-002`）・実行役からの再委託（`MITSUISHI-AGENT-001`）・advisor 以外への最上位モデルの指定（`MITSUISHI-AGENT-002`）・`gstack-upgrade`（`MITSUISHI-SKILL-001`）。gstack の裏の導入・更新も既定で動きます
+- 宣言はセッション（session_id）ごとです（印は PC の中の `~/.claude/mitsuishi-dev/full/<session_id>`。30 日を超えた印は次に印を置くときに片付けます）。新しいセッションでは既定に戻ります。**`/clear` や resume（再開）の後は宣言し直してください**（session_id が変わると印が引き継がれません。変わるかどうかは確かめていません）
+
+### 既定を有効にする（管理者）
+
+会社全体で最初から社内の決まりで進めたいときは、管理設定の `env` に `MITSUISHI_DEFAULT` を `full` で入れます。印が無くても既定で有効になり、利用者は `/mitsuishi-dev:light` でそのセッションだけ外せます（外した印は `~/.claude/mitsuishi-dev/light/<session_id>`）。`full` 以外の値・未設定は既定で無効です（空白・大文字小文字は区別しません）。
+
+```json
+"env": { "CLAUDE_CODE_SUBAGENT_MODEL": "opus", "MITSUISHI_DEFAULT": "full" }
+```
+
 ## 管理者の導入チェックリスト
 
 - [ ] **壊れたときは、管理設定の `enabledPlugins` で `"mitsuishi-dev@mitsuishi": false` にする**（全員のフック・注入が止まる。直したら `true` に戻す）
@@ -12,7 +29,7 @@
 - [ ] claude.ai の「組織設定 > Claude Code > 管理設定」（Owner 権限）に `admin/managed-settings.json` を貼って保存する。次のセッション開始時に全員へ入り、利用者は無効にできない
 - [ ] 社員の PC に Git for Windows・Node.js・Bun を最初に入れる（Git が無いとプラグインが入らず、フックも動かない。gstack の導入には Node.js と Bun も要る）。PowerShell で `winget install --id Git.Git -e --source winget; winget install --id OpenJS.NodeJS.LTS -e --source winget; winget install --id Oven-sh.Bun -e --source winget`（社内のネットワークで msstore が証明書のエラーになるため `--source winget` を付ける）。入れたらアプリを開き直し、セッションを始める（どのフォルダでもよい。gstack は裏で入り、初回は最大 15 分）
 - [ ] 管理設定で入ったプラグインが「無効」で届くことがある。設定 → プラグインの「…」→「オンにする」で有効にする（CLI なら `claude plugin enable <名前>`）
-- [ ] 実行役（`executor`）に git の中のコードを 5 行以上 Write させて止まらないことを確かめる（フックの入力に `agent_id` が付いている）。メインに同じことをさせると `MITSUISHI-EDIT-001` で止まる
+- [ ] `/mitsuishi-dev:workflow` と宣言したセッションで、実行役（`executor`）に git の中のコードを 5 行以上 Write させて止まらないことを確かめる（フックの入力に `agent_id` が付いている）。メインに同じことをさせると `MITSUISHI-EDIT-001` で止まる（宣言しないセッションでは止まらない）
 - [ ] 管理設定の `env` に `MITSUISHI_HOOKS_OFF` を入れたとき、各 PC のフックが止まることを 1 台で確かめる（下の「全員を止める」）
 - [ ] 開発に使う PC で Claude Code を起動し、裏の gstack の導入がセッション終了後も完了して `~/.claude/mitsuishi-dev/state` に書かれることを確かめる（Windows を含む）
 - [ ] gstack の導入・更新の後、`~/.claude/settings.json` に余計なフックが増えていないことを確かめる
@@ -39,9 +56,10 @@
 - **mitsuishi-dev**（自社製）
   - メイン（プランナー）と実行役（サブエージェント）の分担。モデルは別名で書き、対応表は `MODELS.md` の 1 か所
   - エージェント `executor`（実行役）・`ui-executor`（画面専用の実行役、起動時に frontend-design を読み込む）・`advisor`（相談役）・`outside-voice`（外部レビュー役）
-  - フックで止めるのは、メインのコード編集・メインによる Claude の設定とエージェント定義の編集・実行役からの再委託・advisor 以外への最上位モデルの指定・`gstack-upgrade` のスキルの起動だけ（下の「フックに止められたとき」）。フックは促しであり仕切りではない（Bash・PowerShell 経由の書き換え、2 行 Edit の連打、model を定義にも持たない起動は止めない）
-  - `/review`・`/cso`・`/autoplan`・`/qa`・`/design-review` を呼ぶ瞬間（Skill の起動・プロンプト先頭のスラッシュコマンド）に、その段の社内の決まりを 1〜2 行添える。`/gstack-upgrade` は止める（`MITSUISHI-SKILL-001`）
-  - セッション開始時にワークフロー規則と `MODELS.md` と gstack の状態を注入し、どのフォルダで始めても（git があれば）gstack の導入・毎日の更新を裏で行う（セッションは待たない）
+  - 社内の決まり（ワークフロー規則の注入・メインのコード編集の止め・段の決まりの文）は既定で無効で、`/mitsuishi-dev:workflow` と宣言したセッションだけ有効（`/mitsuishi-dev:light` で戻す）
+  - フックで止めるのは、メインのコード編集（宣言したセッションだけ）・メインによる Claude の設定とエージェント定義の編集・実行役からの再委託・advisor 以外への最上位モデルの指定・`gstack-upgrade` のスキルの起動だけ（下の「フックに止められたとき」）。フックは促しであり仕切りではない（Bash・PowerShell 経由の書き換え、2 行 Edit の連打、model を定義にも持たない起動は止めない）
+  - 宣言したセッションで `/review`・`/cso`・`/autoplan`・`/qa`・`/design-review` を呼ぶ瞬間（Skill の起動・プロンプト先頭のスラッシュコマンド）に、その段の社内の決まりを 1〜2 行添える。`/gstack-upgrade` は止める（`MITSUISHI-SKILL-001`）
+  - セッション開始時に、既定は「社内の決まりは既定で無効」の案内と gstack の状態だけを、社内の決まりが有効なセッション（compact の後・管理者が既定を有効にしたとき）はワークフロー規則と `MODELS.md` と gstack の状態を注入し、どのフォルダで始めても（git があれば）gstack の導入・毎日の更新を裏で行う（セッションは待たない）
 - **superpowers**（`obra/superpowers` の固定の sha の写しを `plugins/superpowers/` に同梱し、相対パスで配る。中身は書き換えない）
   - 使うのは `test-driven-development`・`systematic-debugging`・`verification-before-completion`・`receiving-code-review` の 4 つだけ
   - superpowers だけ止める: 管理設定の `enabledPlugins` で `"superpowers@mitsuishi": false` にする
@@ -61,11 +79,12 @@ plugins/mitsuishi-dev/
   hooks/session-start                   ルールと状態の注入、裏の gstack の導入・更新の起動
   hooks/guard-planner-edit              メインのコード編集・Claude の設定とエージェント定義の編集を止める
   hooks/guard-subagent                  再委託と最上位モデルの誤指定を止める
-  hooks/skill-reminder                  gstack の段を呼ぶときにその段の決まりを添え、gstack-upgrade を止める
+  hooks/skill-reminder                  宣言（/mitsuishi-dev:workflow）と戻し（/mitsuishi-dev:light）、gstack の段の決まりを添え、gstack-upgrade を止める
   hooks/lib/common.sh                   共通関数（JSON の読み取り・git の判定・ログ・拒否文）
   hooks/lib/gstack-bg.sh                gstack の導入・更新（裏で動く。状態ファイル・ロック・打ち切り）
   hooks/lib/json-flatten.awk            JSON の読み取り（jq 不要）
-  skills/workflow/SKILL.md              ワークフロー規則の本体
+  skills/workflow/SKILL.md              ワークフロー規則の本体（利用者が /mitsuishi-dev:workflow で宣言する）
+  skills/light/SKILL.md                 社内の決まりを外して既定に戻す（/mitsuishi-dev:light）
 admin/managed-settings.json             管理画面に貼り付ける設定
 scripts/                                CI の検査（版・JSON・禁止語）と上流の固定を上げるスクリプト
 .github/workflows/ci.yml                CI（ubuntu と windows）
@@ -78,12 +97,12 @@ plugins/superpowers/                    obra/superpowers の写し（LICENSE は
 
 拒否文の 1 行目の識別子で見分けます。どれも PC の中の `~/.claude/mitsuishi-dev/hooks.log` に 1 行残ります。
 
-- **`MITSUISHI-EDIT-001`**: メイン（プランナー）が git のリポジトリの中のコードを直接編集しようとした。実行役（`executor`、画面は `ui-executor`）に指示書を渡して委任する。次のものは止めない: 文書（`*.md`・`*.markdown`、ファイル名がちょうど `VERSION`・`CHANGELOG`・`TODOS` か、それに `.md`・`.txt` が付いたもの。`todos.ts` などは文書に入らない）／old_string・new_string がどちらも 2 行以内かつ 300 バイト以内の Edit（`replace_all` を除く。MultiEdit は合計で 2 行・300 バイト）／git の外のファイル。2 行ずつに分けて回避しない
+- **`MITSUISHI-EDIT-001`**: `/mitsuishi-dev:workflow` と宣言したセッションで、メイン（プランナー）が git のリポジトリの中のコードを直接編集しようとした（宣言しないセッションでは止めない）。実行役（`executor`、画面は `ui-executor`）に指示書を渡して委任する。次のものは止めない: 文書（`*.md`・`*.markdown`、ファイル名がちょうど `VERSION`・`CHANGELOG`・`TODOS` か、それに `.md`・`.txt` が付いたもの。`todos.ts` などは文書に入らない）／old_string・new_string がどちらも 2 行以内かつ 300 バイト以内の Edit（`replace_all` を除く。MultiEdit は合計で 2 行・300 バイト）／git の外のファイル。2 行ずつに分けて回避しない
 - **`MITSUISHI-EDIT-002`**: メインが Claude の設定・エージェント定義・ガード自身・git の管理フォルダを編集しようとした。対象は、パスに `.claude/` を含む `settings*.json`／`.claude/agents/` の下（サブフォルダも）／`.claude/plugins/` の下すべて／`.claude.json`／`.mcp.json`／このプラグイン自身のフォルダの下／プラグインの `agents/` の下／パスに `/.git/` を含むもの（git のフックや設定）／長すぎて切り詰められたパス。パスは判定の前に正規化する（`\` を `/` に、`//`・`/./`・`..` をつぶす、末尾のドット・空白と `:` 以降（代替データストリーム）を落とす、大文字小文字を区別しない）。git の内外・行数・文書の例外に関係なく止める（AI が自分でガードを外したり、最上位モデルの制限を回り込んだりしないため）。利用者が手で直すか、実行役に回す
 - **`MITSUISHI-AGENT-001`**: 実行役（サブエージェント）がさらにサブエージェントを起動しようとした（再委託禁止）。実行役は自分の手で行い、分ける必要があれば「要判断」としてメインに返す
 - **`MITSUISHI-AGENT-002`**: `advisor` 以外に最上位モデルを指定した（`MODELS.md` の `TOP_ALIASES` の別名か `TOP_PREFIXES` の正式名の前方一致）。`model` を省いたときは、エージェント定義（プロジェクトの `.claude/agents/`（cwd から git のルートまで上って探す）・`~/.claude/agents/`（どちらもサブフォルダも）・`~/.claude/plugins/` の下の各プラグインの `agents/`）から frontmatter の `name:` が一致するもの（`<プラグイン>:<名前>` ならそのプラグインのもの）を探し、その `model` で判定する（YAML のコメント・引用符は取り除く）。advisor として通すのは `advisor` と `mitsuishi-dev:advisor` だけ。実行役には `opus`・`sonnet`・`haiku` を指定する
 - **`MITSUISHI-SKILL-001`**: `gstack-upgrade` のスキルを呼ぼうとした。gstack は固定の版を使い、更新はプラグインが自動で行う（下の「更新の仕組み」）。プロンプトに `/gstack-upgrade` と打ったときは止めず、「実行しない」決まりを添えるだけ
-- `MITSUISHI-FAIL-*`（ログだけ）: フックが判定できずに通した（`LIB` = 共通関数を読めない／`JSON` = 入力を読めない・文字列の中に生の改行や制御文字がある／`GIT` = git が無い・git の判定に失敗）
+- `MITSUISHI-FAIL-*`（ログだけ）: フックが判定できずに通した（`LIB` = 共通関数を読めない／`JSON` = 入力を読めない・文字列の中に生の改行や制御文字がある／`GIT` = git が無い・git の判定に失敗／`SID` = session_id が不正〔`[A-Za-z0-9_-]` 以外・129 文字以上・空〕で宣言・戻しをしなかった／`MARK` = 宣言・戻しの印を書けなかった）
 
 拒否文と注入文には止め方を書いていません（AI が自分でガードを外さないため）。止める必要があると AI が判断したときは、利用者に相談するよう促します。
 
@@ -139,7 +158,7 @@ git commit -am "mitsuishi-dev を <戻したい版> の中身に戻す" && git p
 ## 動作確認
 
 - 手元: `bash tests/run-hooks-test.sh`（偽の git・setup で動き、gstack とネットワークには触らない）・`node scripts/check-version.mjs main`・`claude plugin validate .`
-- 社員の PC: `/plugin` に `mitsuishi-dev` と `superpowers` が管理設定由来で出る／`/status` に Enterprise managed settings が出る／git のリポジトリの中でメインに「src のファイルを 5 行直して」と頼むと `MITSUISHI-EDIT-001` で止まり、実行役への委任に切り替わる
+- 社員の PC: `/plugin` に `mitsuishi-dev` と `superpowers` が管理設定由来で出る／`/status` に Enterprise managed settings が出る／`/mitsuishi-dev:workflow` と宣言してから git のリポジトリの中でメインに「src のファイルを 5 行直して」と頼むと `MITSUISHI-EDIT-001` で止まり、実行役への委任に切り替わる（宣言しなければ止まらない）
 
 ## ルールを変えるとき
 

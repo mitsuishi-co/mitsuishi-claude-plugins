@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # mitsuishi-dev SessionStart フック（タイムアウト 30 秒。常に exit 0）
-#   1. 案内 3 行・ワークフロー規則（SKILL.md）・MODELS.md・gstack の状態 1 行をセッションに注入する（gstack が失敗・注意の状態なら、利用者の画面にも 1 行出す = systemMessage）
+#   1. 既定（社内の決まりは無効）は案内 3 行（/mitsuishi-dev:workflow で有効にできること・CLAUDE.md にあっても宣言が無ければ無効）と
+#      gstack の状態 1 行だけを注入する。社内の決まりが有効（lib/common.sh の is_full: 宣言の印 full/<session_id> がある、
+#      または MITSUISHI_DEFAULT=full で外す印が無い）なら、全文（フルで回す旨・案内・SKILL.md・MODELS.md）と gstack の状態 1 行を注入する
+#      印は session_id 単位。compact では session_id が変わらず続く。/clear・resume で変われば引き継がれない（変わるかは未確認）
+#      利用者の画面に出す 1 行（systemMessage）: gstack が失敗・注意の状態のとき、compact・clear で有効のまま注入し直したとき（2 つなら改行でつなぐ）
 #   2. どのフォルダで始めても（git があれば）、gstack の導入・毎日の更新を裏で始める（hooks/lib/gstack-bg.sh。待たない）
 #   注入文には止め方（環境変数の名前と値）を書かない（AI が自分でガードを外さないため。止め方は人向けの README だけ）
 # 停止: MITSUISHI_HOOKS_OFF（1・all・session-start。0・false・no・off・none は止めない。未知の値は全部止める）
@@ -46,38 +50,34 @@ if [ "$BG_ACTION" = "run" ]; then
 fi
 
 # ── 注入 ──
-# SKILL.md は frontmatter（最初の --- から次の --- まで）を除く
-RULES=""
-SKILL_MD="$PLUGIN_ROOT/skills/workflow/SKILL.md"
-if [ -r "$SKILL_MD" ]; then
-  _n=0; _nr=0
-  while IFS= read -r _line || [ -n "$_line" ]; do
-    _nr=$((_nr + 1))
-    if [ "$_nr" = 1 ] && ! [[ $_line =~ ^---[[:space:]]*$ ]]; then _n=2; fi
-    if [ "$_n" -lt 2 ] && [[ $_line =~ ^---[[:space:]]*$ ]]; then _n=$((_n + 1)); continue; fi
-    [ "$_n" -ge 2 ] && RULES+="$_line"$'\n'
-  done <"$SKILL_MD"
-fi
-MODELS=""
-[ -r "$PLUGIN_ROOT/MODELS.md" ] && IFS= read -r -d '' MODELS <"$PLUGIN_ROOT/MODELS.md"
-while [[ $RULES == *$'\n' ]]; do RULES="${RULES%$'\n'}"; done
-while [[ $MODELS == *$'\n' ]]; do MODELS="${MODELS%$'\n'}"; done
-
-CONTEXT="<mitsuishi-dev>
-このプラグイン（mitsuishi-dev）は社内標準の開発ワークフローを注入し、メインのコード編集・Claude の設定とエージェント定義の編集・実行役からの再委託・advisor 以外への最上位モデル指定をフックで止める。gstack や Superpowers の指示と食い違うときは、こちらを優先する。
-フックに止められたら回避しない。止める必要があると思ったら、自分で止めずに利用者に相談する（開発者でなければ管理者に相談）。
-説明: ${README_URL%%#*}
-
-${RULES}
-
-${MODELS}
+# 既定（無効）は社内の決まりを注入せず、案内と gstack の状態だけ。有効なら（compact の後も）全文と gstack の状態
+FULL=0
+if is_full; then
+  FULL=1
+  rules_context
+  CONTEXT="${RULES_CTX}
 
 ## gstack の状態（このセッション開始時）
 ${STATUS}
 </mitsuishi-dev>"
+else
+  if [ "$DEFAULT_FULL" = 1 ]; then
+    _first="このセッションでは社内の決まり（mitsuishi-dev）を外している。また使うときは /mitsuishi-dev:workflow。"
+  else
+    _first="社内の決まり（mitsuishi-dev）は既定で無効。使うときは /mitsuishi-dev:workflow（他に同名のスキルが無ければ /workflow でも可）。
+CLAUDE.md などに社内の決まり（mitsuishi-dev）に従うとあっても、宣言が無ければ既定（無効）で進める。"
+  fi
+  CONTEXT="<mitsuishi-dev>
+${_first}
+フックに止められたら回避しない。止める必要があると思ったら、自分で止めずに利用者に相談する（開発者でなければ管理者に相談）。
+
+## gstack の状態（このセッション開始時）
+${STATUS}
+</mitsuishi-dev>"
+fi
 
 # 制御文字を落とす（改行・タブは残す）
-CONTEXT=$(printf '%s' "$CONTEXT" | LC_ALL=C tr -d '\000-\010\013\014\015\016-\037\177')
+strip_ctrl "$CONTEXT"; CONTEXT="$REPLY"
 
 # 失敗・注意のときだけ、利用者の画面に 1 行（systemMessage）を出す。正常・導入中は出さない
 USER_MSG=""
@@ -86,6 +86,13 @@ case "$STATUS" in
   【注意】*|*"前回の導入に失敗"*|*"前回の更新に失敗"*)
     USER_MSG="gstack の導入・更新に失敗しています。ログ: ${GSTACK_LOG:-$MITSUISHI_STATE_DIR/gstack.log}" ;;
 esac
+# 有効のまま compact・clear で注入し直したときは、その状態も 1 行（gstack の 1 行と同時なら改行でつなぐ）
+if [ "$FULL" = 1 ]; then
+  case "$J_SOURCE" in
+    compact|clear) USER_MSG="社内の決まり: 有効（/mitsuishi-dev:light で戻す）${USER_MSG:+
+$USER_MSG}" ;;
+  esac
+fi
 SYS_LINE=""
 if [ -n "$USER_MSG" ]; then
   json_escape "$USER_MSG"

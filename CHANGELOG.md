@@ -2,6 +2,7 @@
 
 `plugins/mitsuishi-dev/` を変えたら、plugin.json と marketplace.json の `version` を上げ、この先頭に 1 行足す（CI で検査）。
 
+- 2.5.0 (2026-11-10) **社員向け: 社内の決まりは既定で無効に変わった**（「全部が遅い」の声を受けて）。何も言わなければ、メインが直接コードを直してよく、実行役への委譲や gstack の工程も省いて進む（CLAUDE.md に社内の決まりに従うと書いていても、宣言が無ければ無効。CLAUDE.md は「宣言したときだけ」に直す）。社内の決まりで進めるときはプロンプトの先頭に /mitsuishi-dev:workflow と打つ（そのセッションだけ有効になり、依頼の作業を /autoplan から /design-review まで聞かずに回す。compact の後も続く。/clear・resume の後は打ち直す）。戻すときは /mitsuishi-dev:light。切り替えたことは画面に 1 行出る。EDIT-002・SKILL-001・AGENT-001・AGENT-002 と gstack の裏の導入・更新は既定でも効く。管理者は管理設定の env に MITSUISHI_DEFAULT=full を入れると既定を有効に戻せる。workflow スキルは利用者だけが呼ぶ形（disable-model-invocation）にし、light スキルを追加
 - 2.4.5 (2026-11-10) 上流の固定を上げる: gstack b615592→b1702ee
 - 2.4.4 (2026-11-09) フック skill-reminder を追加: /review・/cso・/autoplan・/qa・/design-review を呼ぶ瞬間（Skill の起動とプロンプト先頭のスラッシュコマンド）にその段の社内の決まりを 1〜2 行添え、Skill の gstack-upgrade は止める（MITSUISHI-SKILL-001）。MITSUISHI_HOOKS_OFF に skill-reminder を追加。Windows で Git・Node.js・Bun が足りないときの gstack の状態行に、足りないものだけを入れる winget の 1 行を載せる
 - 2.4.3 (2026-11-09) 上流の固定を上げる: gstack 3742ee9→b615592

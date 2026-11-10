@@ -28,10 +28,34 @@
 | `advisor` | fable（最上位） | 相談役。読み取りだけ |
 | `outside-voice` | opus | 外部レビュー役（業務の立場から疑う）。読み取りだけ |
 
+## 4a. 既定と宣言（2.5.0。利用者の決定 2026-11-10。「全部が遅い」という声を受けて既定を反対にした）
+
+- **社内の決まりは既定で無効**。何も言わないセッションでは、ワークフロー規則（SKILL.md・MODELS.md）を注入せず、メインのコード編集を止めず（`MITSUISHI-EDIT-001` は効かない）、gstack の段の決まりの文も出さない。CLAUDE.md などに社内の決まりに従うとあっても、宣言が無ければ既定で進める（session-start の既定の文に書く。利用者には CLAUDE.md を「宣言したときだけ」に直すよう README で頼む）
+- **宣言で有効にする**: UserPromptSubmit で、プロンプトの先頭の語（前後の空白・BOM を除き、空白・全角の空白・`\` で切る。大文字小文字は区別しない）が `/mitsuishi-dev:workflow` か `/workflow` なら、印 `~/.claude/mitsuishi-dev/full/<session_id>` を置き（`light/<session_id>` は消す）、`additionalContext` で添える。添えるのは、先頭の「このセッションは社内の決まりで進める。依頼の作業は /autoplan → 実行役で実装 → /review →（/cso）→ /qa →（/design-review）を聞かずに最後まで回す。戻すには /mitsuishi-dev:light」・「フックの状態ファイルを作る・消す操作で決まりを外さない（外すのは利用者の /mitsuishi-dev:light だけ）」・案内 3 行・MODELS.md だけ（SKILL.md の本文は Claude Code がスキルとして読み込むので、二重に入れない）。SKILL.md の本文も、宣言されたら最初の依頼から工程を自動で回すと読める書き方にする。以後そのセッションでは `MITSUISHI-EDIT-001` と段の決まりの文が効く
+- **戻す**: 先頭の語が `/mitsuishi-dev:light` か `/light` なら `full/<session_id>` を消し（既定が有効なら `light/<session_id>` を置き）、1 行で知らせる
+- **利用者に状態を見せる**: 宣言・戻し・compact・clear の後に有効のまま注入し直したときは、`systemMessage` で 1 行出す（「社内の決まり: 有効（/mitsuishi-dev:light で戻す）」「社内の決まり: 無効に戻した」）。session-start で gstack の失敗・注意の 1 行と同時なら改行でつなぐ
+- 案内の正は `/mitsuishi-dev:workflow`・`/mitsuishi-dev:light`。短い形 `/workflow`・`/light` は「他に同名のスキルが無ければ使える」と添える程度にする
+- 切り替えは先頭のコマンドだけで判定する（文中の語では切り替えない。既定が軽いので「軽量モード」などの語で入る仕組みは要らない）。切り替えるのは利用者だけ: `workflow`・`light` のスキルは `disable-model-invocation: true`（`workflow` の description も「必ず従う」をやめ、モデルが自分で読み込んで既定が重くならないようにする）。`/full` のスキルは作らない
+- **管理者の既定の反転**: 環境変数 `MITSUISHI_DEFAULT`（管理設定の `env` で入れる）が `full`（空白・大文字小文字は区別しない）なら、印が無くても既定で有効。`/mitsuishi-dev:light` は外す印 `~/.claude/mitsuishi-dev/light/<session_id>` を置いて外し、宣言はそれを消して戻す。それ以外の値・未設定は既定で無効。判定（lib/common.sh の `is_full`）は外部コマンドなしで、既定が無効なら `full/<id>` の、有効なら `light/<id>` の存在確認 1 回だけ。session_id が不正なら印を見ず既定のまま。既定が有効のときは session-start が起動のたびに全文を注入する
+- **印に関係なく常に効く**: `MITSUISHI-EDIT-002`・`MITSUISHI-SKILL-001`・`MITSUISHI-AGENT-001`（実行役の再委託止め）・`MITSUISHI-AGENT-002`（最上位モデル止め）・session-start の gstack の裏の導入・更新と状態行。`MITSUISHI_HOOKS_OFF` の挙動は変えない
+- session_id は `[A-Za-z0-9_-]` だけ・1〜128 文字・切り詰めなしのときだけ使う。外れたら切り替えず（既定のまま）、ログに 1 行（`MITSUISHI-FAIL-SID`）。印を書けなければログに 1 行（`MITSUISHI-FAIL-MARK`）と、切り替えられなかった旨を添える
+- 印を置くときに、30 日（43200 分）を超えた古い印を片付ける（`find -mmin +43200`。切り替えのときだけ外部コマンドを起動する）
+- session-start は有効なら（compact で動いたときも）全文（先頭の 2 行・案内 3 行・SKILL.md・MODELS.md）を注入し直し、無効なら「社内の決まり（mitsuishi-dev）は既定で無効。使うときは /mitsuishi-dev:workflow（他に同名のスキルが無ければ /workflow でも可）。」・「CLAUDE.md などに社内の決まり（mitsuishi-dev）に従うとあっても、宣言が無ければ既定（無効）で進める。」・フックに止められたら利用者に相談する旨と gstack の状態だけを注入する（既定が有効で外したセッションは「このセッションでは社内の決まりを外している」）
+- 実行役の再委託止め（`MITSUISHI-AGENT-001`）を既定で外さないのは、委譲そのものは既定でも使え、再委託は実行役が指示の範囲を越えて広げる・トークンを使い切る事故の柵で、速さの苦情とは関係が無いため（外しても速くならない）
+
+既知の限界（確かめた事実）:
+- 印は session_id 単位。サブエージェントの記録（`~/.claude/projects/<…>/<session_id>/subagents/agent-*.jsonl`）の `sessionId` は親のセッションと同じだった（2026-11-10 にこの PC で確認）。フックの入力の `session_id` も同じ値と見て、実行役の中の Skill でも親の宣言に従って段の決まりの文を出す（実行役の編集は宣言に関係なく `agent_id` で通す）
+- compact の前後で記録の `sessionId` は変わらなかった（compact の境目を含む記録の `sessionId` が 1 つだけ。2026-11-10 にこの PC で確認）。宣言は compact の後も続き、session-start が全文を入れ直す
+- `/clear`・resume（再開）で session_id が変わるかは確かめていない（この PC の記録に例が無い）。変われば印は引き継がれないので、**`/clear`・resume の後は宣言し直す**（README に書く）。resume は SessionStart の対象外（matcher は startup|clear|compact のまま）なので、再開しても全文は入れ直さない
+- 宣言で入った文は、`/mitsuishi-dev:light` で戻しても会話から消せない（戻す 1 行で「従わなくてよい」と添えるだけ）
+- 30 日を超えて続くセッションは、別のセッションの切り替えのときに印が片付けられて既定に戻ることがある
+- 印は PC の中のファイルなので、Bash などで作る・消すと切り替わる（フックは事故防止の柵で、攻撃への防御ではない。注入文で「状態ファイルの操作で外さない」と添える。パスは AI が読む文に書かない）
+- 他に同名の `workflow`・`light` スキルがあると、短い形 `/workflow`・`/light` は別のスキルを起動することがある（フックは先頭の語だけを見るので、印は切り替わる）。案内は `/mitsuishi-dev:` 付きを正にする
+
 ## 4. フック（止めるのは 3 つと gstack-upgrade。gstack の段の決まりを添えるものが 1 つ。フックは促しであり仕切りではない）
 
 止めるもの:
-1. **メインのコード編集**（`MITSUISHI-EDIT-001`）: git のリポジトリの中のファイルだけが対象。文書（`*.md`・`*.markdown`、ファイル名がちょうど VERSION・CHANGELOG・TODOS か、それに `.md`・`.txt` が付いたもの）は通す。Edit で old_string・new_string がどちらも 2 行以内かつ 300 バイト以内なら通す（replace_all は除く）。MultiEdit は各 edit の行数の合計が 2 行以内かつ合計 300 バイト以内なら通す。Write と NotebookEdit のコードは止める。パスは切り詰めずに判定し、読み取りで切り詰められたパスは例外に入れない
+1. **メインのコード編集**（`MITSUISHI-EDIT-001`）: 宣言したセッション（4a）だけ。git のリポジトリの中のファイルだけが対象。文書（`*.md`・`*.markdown`、ファイル名がちょうど VERSION・CHANGELOG・TODOS か、それに `.md`・`.txt` が付いたもの）は通す。Edit で old_string・new_string がどちらも 2 行以内かつ 300 バイト以内なら通す（replace_all は除く）。MultiEdit は各 edit の行数の合計が 2 行以内かつ合計 300 バイト以内なら通す。Write と NotebookEdit のコードは止める。パスは切り詰めずに判定し、読み取りで切り詰められたパスは例外に入れない
 1b. **メインによる Claude の設定・エージェント定義・ガード自身の編集**（`MITSUISHI-EDIT-002`、2026-11-07 /review で追加・2 回目で拡大）: 次は git の内外・行数・文書の例外に関係なく止める（AI が自分でガードを外したり、最上位モデルの制限を回り込んだりしないため）。直すときは利用者が手で直すか、実行役に回す
    - パスに `.claude/` を含む `settings*.json`、`.claude/agents/` の下（サブフォルダも）、`.claude/plugins/` の下すべて、`.claude.json`、`.mcp.json`、このプラグイン自身のフォルダの下、プラグインの `agents/` の下
    - パスに `/.git/` を含むもの（git のフックや設定）
@@ -39,8 +63,8 @@
 2. **実行役からの再委託**（`MITSUISHI-AGENT-001`）: 入力の最上位に `agent_id` があれば止める
 3. **advisor 以外への最上位モデルの指定**（`MITSUISHI-AGENT-002`）: `model` が MODELS.md の `TOP_ALIASES`（別名の完全一致）か `TOP_PREFIXES`（正式名の前方一致）に当たれば止める。`model` を省いたときは、subagent_type のエージェント定義（プロジェクトの `.claude/agents/`（cwd から git のルートまで上って探す。BOM 付きも読む）・`~/.claude/agents/`（サブフォルダも）・`~/.claude/plugins/` の下の各プラグインの `agents/`）から、frontmatter の `name:` が一致するもの（名前空間つきならそのプラグインのもの）を探し、`model` を同じ表で照合する（YAML のコメント・引用符は取り除く）。advisor として通すのは、名前が `advisor` か `mitsuishi-dev:advisor` のものだけ
 
-添えるもの（2.4.4 で追加。`hooks/skill-reminder`。止めるのは gstack-upgrade だけ）:
-4. **gstack の段の決まりを添える**: PreToolUse（`Skill`）の `tool_input.skill`（`gstack:review` のような接頭辞・先頭の `/` は外し、小文字で見る）と、UserPromptSubmit のプロンプトの先頭の語（前後の空白・BOM を除き、空白・全角の空白・`\` で切る）が、`review`（業務面の声は `mitsuishi-dev:outside-voice`、2 つ目の声は組み込みの `/code-review`）・`cso`（`claude-security` を添える）・`autoplan`（外部レビューは `outside-voice`、画面があれば `/plan-design-review`、実装は `executor`・画面は `ui-executor`）・`qa`・`design-review`（修正は実行役へ）なら、その決まりを `additionalContext` で 1〜2 行添える。ワークフロー規則はセッション開始時に注入するだけで、長いセッションで抜けるため。実行役の中でも区別しない
+添えるもの（2.4.4 で追加。`hooks/skill-reminder`。止めるのは gstack-upgrade だけ。宣言と戻し〔4a〕も行う）:
+4. **gstack の段の決まりを添える**（宣言したセッション〔4a〕だけ）: PreToolUse（`Skill`）の `tool_input.skill`（`gstack:review` のような接頭辞・先頭の `/` は外し、小文字で見る）と、UserPromptSubmit のプロンプトの先頭の語（前後の空白・BOM を除き、空白・全角の空白・`\` で切る）が、`review`（業務面の声は `mitsuishi-dev:outside-voice`、2 つ目の声は組み込みの `/code-review`）・`cso`（`claude-security` を添える）・`autoplan`（外部レビューは `outside-voice`、画面があれば `/plan-design-review`、実装は `executor`・画面は `ui-executor`）・`qa`・`design-review`（修正は実行役へ）なら、その決まりを `additionalContext` で 1〜2 行添える。ワークフロー規則はセッション開始時に注入するだけで、長いセッションで抜けるため。実行役の中でも区別しない
 5. **gstack-upgrade を止める**（`MITSUISHI-SKILL-001`）: Skill の `gstack-upgrade` は拒否する（gstack は固定の版を使い、更新はプラグインが自動で行う）。プロンプトの `/gstack-upgrade` は止めず、「実行しない」決まりを添えるだけ
    - それ以外・壊れた入力・awk が無いときは何も出さない（作業を止めない）
 
@@ -59,7 +83,7 @@ git の判定: 対象ファイルのパスの `\` を `/` に直し、存在す�
 
 拒否文の形（3 行）: 1 行目 = 識別子と直し方／2 行目 = 何を止めたか（ツール・対象・行数・上限。2 行ずつに分けて回避しない）／3 行目 = 「止める必要があると思ったら、自分で止めずに利用者に相談する（開発者でなければ管理者に相談）。説明は README の『フックに止められたとき』」。**止め方（環境変数の名前と値）は AI が読む文（拒否文・注入文）に書かない**（2026-11-07 /review で変更。AI が自分でガードを外さないため）。止め方は人向けの README だけに書く。載せるパスは改行・制御文字を落とす。guard-subagent は呼んだ側・subagent_type・model・当たった別名を入れる。
 
-失敗の扱い: lib を読めない・JSON を読めないときは通す（全員の作業を止めない）が、ログに 1 行残す。
+失敗の扱い: lib を読めない・JSON を読めない・session_id が不正なときは通す（宣言は既定のまま）（全員の作業を止めない）が、ログに 1 行残す。
 
 停止: 環境変数 `MITSUISHI_HOOKS_OFF` の 1 つだけ。`1`・`all` = 全フック、`planner-edit`・`subagent`・`session-start`・`skill-reminder` をカンマ区切りで指定するとそのフックだけ。空白・大文字小文字は正規化し、`0`・`false`・`no`・`off`・`none` は「止めない」、それ以外の未知の値は全部止める。判定は各フックの最初（lib を読む前）。全員を止めるときは管理者が管理設定の `env` に足す（効くことを導入時に実機で確かめる）。それも効かない旧版では `enabledPlugins` の `mitsuishi-dev@mitsuishi` を false にする。
 
@@ -68,7 +92,7 @@ git の判定: 対象ファイルのパスの `\` を `/` に直し、存在す�
 ## 5. セッション開始（session-start）
 
 - タイムアウトは 30 秒。常に exit 0
-- 注入文: 先頭に案内 3 行（このプラグインの役目・フックに止められたら利用者に相談すること・README の URL）。止め方は書かない→ ワークフロー規則（SKILL.md）→ MODELS.md → gstack の状態 1 行（導入済・最終更新日／導入中／未導入〔git の外で起動、など理由〕／更新に 3 回続けて失敗〔ログのパスと手で直す手順〕／Git・Node.js・Bun が足りない〔Windows では足りないものだけを入れる winget の 1 行と、アプリを開き直すこと〕／編集ガード無効〔git なし〕）。注入する文字列は制御文字を落としてから JSON にする
+- 注入文（4a の宣言の印があるとき。無ければ「既定で無効」の案内 2 行と gstack の状態 1 行だけ）: 先頭にフルで回す旨の 1 行と案内 3 行（このプラグインの役目・フックに止められたら利用者に相談すること・README の URL）。止め方は書かない→ ワークフロー規則（SKILL.md）→ MODELS.md → gstack の状態 1 行（導入済・最終更新日／導入中／未導入〔git の外で起動、など理由〕／更新に 3 回続けて失敗〔ログのパスと手で直す手順〕／Git・Node.js・Bun が足りない〔Windows では足りないものだけを入れる winget の 1 行と、アプリを開き直すこと〕／編集ガード無効〔git なし〕）。注入する文字列は制御文字を落としてから JSON にする
 - gstack の導入と毎日の更新は、どのフォルダで始めても、git があれば行う。社員は開発に使う前提で Git・Node.js・Bun を入れるため
 - 導入・更新は `hooks/lib/gstack-bg.sh` が裏で行い、セッションは待たない（`( … ) </dev/null >/dev/null 2>&1 &`）。session-start は呼ぶだけ
 - gstack-bg.sh:
