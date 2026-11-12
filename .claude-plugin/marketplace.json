@@ -8,7 +8,7 @@
     {
       "name": "mitsuishi-dev",
       "description": "社内標準の開発ワークフロー（プランナーと実行役の分担・モデルの使い分け・gstack の工程・gstack の導入と設定）",
-      "version": "2.5.2",
+      "version": "2.5.3",
       "source": "./plugins/mitsuishi-dev"
     },
     {
