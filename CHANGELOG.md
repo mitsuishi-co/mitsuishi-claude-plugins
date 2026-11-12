@@ -2,6 +2,7 @@
 
 `plugins/mitsuishi-dev/` を変えたら、plugin.json と marketplace.json の `version` を上げ、この先頭に 1 行足す（CI で検査）。
 
+- 2.5.3 (2026-11-12) 上流の固定を上げる: gstack f0cd9f8→b1f7830
 - 2.5.2 (2026-11-11) 上流の固定を上げる: gstack 6b32714→f0cd9f8
 - 2.5.1 (2026-11-10) 上流の固定を上げる: gstack b1702ee→6b32714
 - 2.5.0 (2026-11-10) **社員向け: 社内の決まりは既定で無効に変わった**（「全部が遅い」の声を受けて）。何も言わなければ、メインが直接コードを直してよく、実行役への委譲や gstack の工程も省いて進む（CLAUDE.md に社内の決まりに従うと書いていても、宣言が無ければ無効。CLAUDE.md は「宣言したときだけ」に直す）。社内の決まりで進めるときはプロンプトの先頭に /mitsuishi-dev:workflow と打つ（そのセッションだけ有効になり、依頼の作業を /autoplan から /design-review まで聞かずに回す。compact の後も続く。/clear・resume の後は打ち直す）。戻すときは /mitsuishi-dev:light。切り替えたことは画面に 1 行出る。EDIT-002・SKILL-001・AGENT-001・AGENT-002 と gstack の裏の導入・更新は既定でも効く。管理者は管理設定の env に MITSUISHI_DEFAULT=full を入れると既定を有効に戻せる。workflow スキルは利用者だけが呼ぶ形（disable-model-invocation）にし、light スキルを追加
