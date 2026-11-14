@@ -2,6 +2,7 @@
 
 `plugins/mitsuishi-dev/` を変えたら、plugin.json と marketplace.json の `version` を上げ、この先頭に 1 行足す（CI で検査）。
 
+- 2.5.5 (2026-11-14) 上流の固定を上げる: gstack 4414f4c→654ad4b
 - 2.5.4 (2026-11-13) 上流の固定を上げる: gstack b1f7830→4414f4c
 - 2.5.3 (2026-11-12) 上流の固定を上げる: gstack f0cd9f8→b1f7830
 - 2.5.2 (2026-11-11) 上流の固定を上げる: gstack 6b32714→f0cd9f8
