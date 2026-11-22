@@ -76,6 +76,12 @@ disable-model-invocation: true
 - **使わない**: `writing-plans`・`executing-plans`・`brainstorming`・`subagent-driven-development` の実行の仕組み・`using-git-worktrees`・`dispatching-parallel-agents`（計画は `/autoplan`、実装は実行役）
 - Superpowers の「スキルを使え」の促しや指示と、この一覧・この文書が食い違うときは、この文書を優先する
 
+## 確認が出ないコマンドの書き方
+
+- gstack の事故防止の確認（`[careful]`。作業フォルダの外や変数経由の削除で出る）は切らない（`destructive_guard` を off にしない。切るのは利用者だけ）
+- 確認が出ない書き方をする: 変数や展開（`$VAR`・`$(...)`・`~`）を通した削除（`rm`・`Remove-Item`）を長いコマンドに混ぜない。一時ファイルはスクラッチパッドに置いて消さずに残すか、パスを直接書いた短いコマンドで別に消す
+- 確認が出たら、利用者に何を消すコマンドかを 1 行で伝える。同じ形をもう一度出さない
+
 ## トークンの節約
 
 - 実行役への指示には、調べ済みの事実（ファイル・行・決まったこと）を書いて渡し、探し直させない
