@@ -2,6 +2,7 @@
 
 `plugins/mitsuishi-dev/` を変えたら、plugin.json と marketplace.json の `version` を上げ、この先頭に 1 行足す（CI で検査）。
 
+- 2.5.19 (2026-11-28) 上流の固定を上げる: gstack 306ff23→778934c
 - 2.5.18 (2026-11-27) 上流の固定を上げる: gstack e6dd567→306ff23
 - 2.5.17 (2026-11-26) 上流の固定を上げる: gstack ccd80de→e6dd567
 - 2.5.16 (2026-11-25) 確認（[careful]）が出ない書き方の対象に、別のシェル・プロセスを起こす／止めるコマンド（Start-Process・Stop-Process・taskkill・kill など）を追加（削除だけが対象で、dev サーバの起動し直しで確認が 2 回出たため）。ワークフロー規則に 1 行、宣言していないセッションの注入文にも追記
